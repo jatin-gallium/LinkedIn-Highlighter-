@@ -1356,3 +1356,337 @@ body.leh-sidebar-open #leh-sidebar-tab {
   --leh-text-muted: #888;
   --leh-text-faint: #555;
 }
+
+/* ─── V4.2 UI Refresh (Figma-style polish) ───────────────────────── */
+
+#leh-sidebar {
+  --leh-ui-radius-lg: 16px;
+  --leh-ui-radius-md: 12px;
+  --leh-ui-radius-sm: 10px;
+  --leh-ui-shadow-soft: 0 8px 30px rgba(15, 23, 42, 0.08);
+  --leh-ui-shadow-card: 0 4px 14px rgba(15, 23, 42, 0.06);
+  --leh-ui-stroke: rgba(15, 23, 42, 0.08);
+}
+
+#leh-sidebar {
+  width: 360px;
+  border-left: 1px solid var(--leh-ui-stroke);
+  box-shadow: -8px 0 34px rgba(15, 23, 42, 0.12);
+}
+
+body.leh-sidebar-open {
+  margin-right: 360px !important;
+}
+
+#leh-sidebar.leh-closed {
+  transform: translateX(360px);
+}
+
+body.leh-sidebar-open #leh-sidebar-tab {
+  right: 360px;
+}
+
+.leh-sidebar-header {
+  padding: 14px 16px;
+  background:
+    radial-gradient(110% 160% at 0% 0%, rgba(255, 255, 255, 0.18), transparent 45%),
+    linear-gradient(140deg, #0a66c2, #0752a0 58%, #043f7d);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.leh-sidebar-title {
+  font-size: 14px;
+  letter-spacing: 0.01em;
+}
+
+.leh-version-badge {
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  padding: 3px 8px;
+}
+
+.leh-stats-bar {
+  padding: 10px 12px;
+  gap: 8px;
+  border-bottom: none;
+  background: transparent;
+}
+
+.leh-stat {
+  background: rgba(10, 102, 194, 0.06);
+  border: 1px solid rgba(10, 102, 194, 0.14);
+  border-radius: 12px;
+  padding: 8px 4px;
+}
+
+.leh-stat-value {
+  font-size: 14px;
+}
+
+.leh-search-box {
+  padding: 8px 12px 12px;
+  border-bottom: none;
+}
+
+.leh-search-input-wrap {
+  border: 1px solid rgba(10, 102, 194, 0.16);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(246, 250, 255, 0.95));
+  box-shadow: 0 4px 14px rgba(10, 102, 194, 0.08);
+}
+
+.leh-search-input {
+  border: none;
+  background: transparent;
+  height: 38px;
+  padding-left: 34px;
+  padding-right: 30px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.leh-search-input:focus {
+  box-shadow: 0 0 0 2px rgba(10, 102, 194, 0.14);
+  border-radius: 14px;
+}
+
+.leh-search-icon {
+  font-size: 14px;
+  left: 11px;
+}
+
+.leh-search-clear {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+}
+
+.leh-search-meta {
+  margin-top: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.leh-search-caption {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--leh-text-muted);
+  margin-bottom: 6px;
+}
+
+.leh-search-count {
+  text-align: left;
+  font-size: 10px;
+  margin-top: 0;
+}
+
+.leh-filter-bar {
+  padding: 0 12px 10px;
+  border-bottom: none;
+}
+
+.leh-filter-label {
+  font-size: 10px;
+  margin-bottom: 7px;
+}
+
+.leh-chip {
+  border-radius: 999px;
+  padding: 5px 9px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  font-size: 10px;
+  background: #fff;
+}
+
+.leh-chip.leh-chip-active {
+  box-shadow: 0 6px 14px rgba(10, 102, 194, 0.25);
+}
+
+.leh-page-indicator {
+  margin: 0 12px 6px;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 10px;
+}
+
+.leh-posts-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 12px 8px;
+}
+
+.leh-posts-toolbar-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.leh-select-compact {
+  min-width: 90px;
+  padding: 4px 24px 4px 8px;
+  font-size: 10px;
+}
+
+.leh-sidebar-body {
+  padding: 4px 0 12px;
+}
+
+.leh-post-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 12px 8px;
+}
+
+.leh-post-toolbar-right {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.leh-compact-select {
+  min-width: 90px;
+  padding: 4px 24px 4px 8px;
+  font-size: 10px;
+}
+
+.leh-parser-diagnostics {
+  padding: 2px 12px 4px;
+}
+
+.leh-parser-diagnostics-inner {
+  gap: 6px;
+}
+
+.leh-diag-chip {
+  border-radius: 999px;
+  font-size: 10px;
+  padding: 3px 8px;
+}
+
+.leh-mini-check {
+  background: #fff;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 10px;
+}
+
+.leh-post-list {
+  padding: 6px 10px;
+}
+
+.leh-post-card {
+  border-radius: var(--leh-ui-radius-md);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: var(--leh-ui-shadow-card);
+  margin-bottom: 7px;
+}
+
+.leh-post-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(10, 102, 194, 0.16);
+}
+
+.leh-post-card-hook {
+  line-height: 1.45;
+}
+
+.leh-post-card-footer {
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(15, 23, 42, 0.1);
+}
+
+.leh-card-btn {
+  border-radius: 8px;
+  min-height: 22px;
+}
+
+.leh-section {
+  margin: 7px 10px;
+  border-radius: var(--leh-ui-radius-lg);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: linear-gradient(180deg, #ffffff, #fbfdff);
+  box-shadow: var(--leh-ui-shadow-card);
+}
+
+.leh-section-header {
+  padding: 10px 12px;
+  font-size: 10px;
+  letter-spacing: 0.07em;
+}
+
+.leh-section-body {
+  padding: 10px 12px 12px;
+}
+
+.leh-control-row {
+  margin-bottom: 10px;
+}
+
+.leh-label-text {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.leh-select,
+.leh-num-input,
+.leh-date-input {
+  border-radius: 10px;
+  border-color: rgba(15, 23, 42, 0.16);
+}
+
+.leh-btn {
+  border-radius: 10px;
+  font-weight: 700;
+}
+
+.leh-btn-primary {
+  box-shadow: 0 8px 18px rgba(10, 102, 194, 0.26);
+}
+
+.leh-btn-secondary {
+  border-radius: 10px;
+}
+
+.leh-empty-state {
+  border: 1px dashed rgba(15, 23, 42, 0.18);
+  border-radius: 14px;
+  margin: 6px 2px;
+  padding: 24px 16px;
+  background: linear-gradient(180deg, #fff, #f9fcff);
+}
+
+@media (prefers-color-scheme: dark) {
+  #leh-sidebar {
+    --leh-ui-stroke: rgba(255, 255, 255, 0.12);
+  }
+  .leh-search-input-wrap {
+    background: linear-gradient(180deg, rgba(39, 47, 56, 0.95), rgba(31, 39, 47, 0.95));
+    border-color: rgba(92, 174, 232, 0.25);
+  }
+  .leh-chip,
+  .leh-mini-check,
+  .leh-section {
+    background: #22272b;
+    border-color: #3a4047;
+  }
+  .leh-stat {
+    background: rgba(92, 174, 232, 0.12);
+    border-color: rgba(92, 174, 232, 0.2);
+  }
+  .leh-post-card {
+    background: #232a31;
+    border-color: #3a4047;
+  }
+  .leh-post-card-footer {
+    border-top-color: #3a4047;
+  }
+}

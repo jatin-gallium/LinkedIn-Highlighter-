@@ -1328,13 +1328,16 @@
 
     // Search
     '<div class="leh-search-box">' +
+      '<div class="leh-search-caption">Search and review</div>' +
       '<div class="leh-search-input-wrap">' +
         '<span class="leh-search-icon">\u{1F50D}</span>' +
-        '<input type="text" id="leh-search" class="leh-search-input" placeholder="Search posts by keyword, author..." />' +
-        '<button id="leh-search-clear" class="leh-search-clear">&times;</button>' +
+        '<input type="text" id="leh-search" class="leh-search-input" placeholder="Search by keyword, author, or hook..." />' +
+        '<button id="leh-search-clear" class="leh-search-clear" title="Clear search" aria-label="Clear search">&times;</button>' +
       '</div>' +
-      '<div id="leh-search-count" class="leh-search-count"></div>' +
-      '<div id="leh-quality-count" class="leh-search-count"></div>' +
+      '<div class="leh-search-meta">' +
+        '<div id="leh-search-count" class="leh-search-count"></div>' +
+        '<div id="leh-quality-count" class="leh-search-count"></div>' +
+      '</div>' +
     '</div>' +
 
     // Media filter chips
@@ -1359,10 +1362,10 @@
 
       // Post list
       // V4.1: Shrink/Expand toggle for post feed
-      '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 12px;">' +
+      '<div class="leh-posts-toolbar">' +
         '<span class="leh-filter-label">Posts</span>' +
-        '<div style="display:flex;gap:6px;align-items:center;">' +
-          '<select id="leh-display-mode" class="leh-select" title="Number display mode" style="padding:3px 20px 3px 6px;font-size:10px;">' +
+        '<div class="leh-posts-toolbar-actions">' +
+          '<select id="leh-display-mode" class="leh-select leh-select-compact" title="Number display mode">' +
             '<option value="compact">Compact</option>' +
             '<option value="exact">Exact</option>' +
           '</select>' +
