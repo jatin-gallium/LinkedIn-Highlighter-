@@ -75,10 +75,33 @@ A task is done when all of the following are true:
 Use this order when deciding what to improve:
 
 1. Startup and activation performance
-2. Memory hotspots and leaks
-3. Bundle/package size reduction
-4. Runtime latency in common user flows
-5. Developer experience and maintainability improvements
+2. Reliability across LinkedIn SPA navigation (especially Profile -> Activity)
+3. Memory hotspots and leaks
+4. Bundle/package size reduction
+5. Runtime latency in common user flows
+6. Developer experience and maintainability improvements
+
+## Platform Safety and Non-Invasive Rules
+
+This extension must stay strictly client-side and user-side. Do not attempt to interfere with or "game" LinkedIn systems.
+
+- No server calls, scraping services, or external telemetry by default.
+- No account actions (posting, messaging, reactions, follows, connection requests).
+- No hidden/background automation loops intended to mimic user engagement behavior.
+- Prefer user-triggered actions over automatic clicking.
+- Keep scan frequency low and throttled; avoid high-frequency DOM churn.
+- Provide clear toggles for any potentially active behavior (for example auto-scroll), and keep risky options off by default.
+- Never bypass platform protections or attempt anti-detection evasion techniques.
+
+## v4.2 Focus Features (Lean Roadmap)
+
+Prioritize high-impact, low-bloat features:
+
+1. Accuracy-first engagement parser with confidence levels
+2. Suspect-count queue (jump to next likely parsing issue)
+3. Exact vs compact number display toggle
+4. Route-resilient processing (no manual reload on Activity pages)
+5. Lightweight diagnostics panel (what changed, why, confidence)
 
 ## Communication Style
 

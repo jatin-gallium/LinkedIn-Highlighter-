@@ -51,6 +51,15 @@
   let showMorePollId = null;
   const SCROLL_SPEEDS = [300, 600, 1200, 2200, 3500, 5500];
 
+  // Observer/navigation lifecycle (SPA-safe)
+  let postObserver = null;
+  let observerTarget = null;
+  let observerRescanIntervalId = null;
+  let observerRetargetIntervalId = null;
+  let navPollIntervalId = null;
+  let historyPatched = false;
+  let routeRefreshTimeoutIds = [];
+
   // Sidebar
   let sidebarOpen = true;
   let compactPostCards = false;
@@ -873,9 +882,16 @@
   //  MUTATION OBSERVER — improved for v4.1
   // ════════════════════════════════════════════════════════════════════
 
-  function setupObserver() {
-    const target = getMainArea();
-    const obs = new MutationObserver((muts) => {
+  function attachObserverToTarget(target) {
+    if (!target) return;
+    if (postObserver && observerTarget === target) return;
+
+    if (postObserver) {
+      try { postObserver.disconnect(); } catch {}
+    }
+
+    observerTarget = target;
+    postObserver = new MutationObserver((muts) => {
       let shouldProcess = false;
       for (const m of muts) {
         if (m.addedNodes.length > 0) { shouldProcess = true; break; }
@@ -883,14 +899,47 @@
       }
       if (shouldProcess) debouncedProcess();
     });
-    obs.observe(target, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-urn", "data-id"] });
+    postObserver.observe(target, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-urn", "data-id"],
+    });
+  }
+
+  function scheduleRouteRefreshes() {
+    for (const id of routeRefreshTimeoutIds) clearTimeout(id);
+    routeRefreshTimeoutIds = [];
+
+    // Staggered refreshes: catches delayed LinkedIn render phases.
+    const delays = [250, 900, 2000];
+    for (const ms of delays) {
+      routeRefreshTimeoutIds.push(
+        setTimeout(() => {
+          processAllPosts(true);
+          updateSidebar();
+        }, ms)
+      );
+    }
+  }
+
+  function setupObserver() {
+    attachObserverToTarget(getMainArea());
 
     // Periodic re-scan to catch anything the observer misses
-    setInterval(() => {
+    if (observerRescanIntervalId) clearInterval(observerRescanIntervalId);
+    observerRescanIntervalId = setInterval(() => {
       if (enabled) processAllPosts();
     }, 2000);
 
-    return obs;
+    // Rebind observer if LinkedIn swaps the main container after SPA nav
+    if (observerRetargetIntervalId) clearInterval(observerRetargetIntervalId);
+    observerRetargetIntervalId = setInterval(() => {
+      const target = getMainArea();
+      if (target !== observerTarget) attachObserverToTarget(target);
+    }, 1000);
+
+    return postObserver;
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -899,16 +948,42 @@
 
   let lastUrl = location.href;
 
+  function handlePossibleRouteChange() {
+    if (location.href === lastUrl) return;
+    lastUrl = location.href;
+
+    // Ensure observer follows new page shell, then refresh extracted data.
+    attachObserverToTarget(getMainArea());
+    scheduleRouteRefreshes();
+  }
+
   function setupNavigationListener() {
-    setInterval(() => {
-      if (location.href !== lastUrl) {
-        lastUrl = location.href;
-        setTimeout(() => {
-          processAllPosts(true);
-          updateSidebar();
-        }, 1500);
-      }
-    }, 500);
+    // Poll-based fallback (covers some internal LinkedIn transitions).
+    if (navPollIntervalId) clearInterval(navPollIntervalId);
+    navPollIntervalId = setInterval(handlePossibleRouteChange, 400);
+
+    // popstate for back/forward.
+    window.addEventListener("popstate", () => {
+      setTimeout(handlePossibleRouteChange, 0);
+    });
+
+    // Patch History API once so pushState/replaceState transitions are observed.
+    if (!historyPatched) {
+      historyPatched = true;
+      const rawPushState = history.pushState;
+      const rawReplaceState = history.replaceState;
+
+      history.pushState = function () {
+        const ret = rawPushState.apply(this, arguments);
+        setTimeout(handlePossibleRouteChange, 0);
+        return ret;
+      };
+      history.replaceState = function () {
+        const ret = rawReplaceState.apply(this, arguments);
+        setTimeout(handlePossibleRouteChange, 0);
+        return ret;
+      };
+    }
   }
 
   // ════════════════════════════════════════════════════════════════════
