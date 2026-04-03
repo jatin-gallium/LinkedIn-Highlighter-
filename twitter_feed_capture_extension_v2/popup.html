@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TFC Scanner v2</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="tfc-popup">
+    <main class="tfc-popup-card">
+      <header class="tfc-popup-header">
+        <h1>TFC Scanner v2</h1>
+        <span class="tfc-pill" id="statusPill">Idle</span>
+      </header>
+
+      <section class="tfc-popup-grid">
+        <label class="tfc-field">
+          <span>Classifier Mode</span>
+          <select id="classifierSelect">
+            <option value="software_engineering">Software Engineering</option>
+            <option value="meme">Meme Relevance</option>
+            <option value="general_take">General Take</option>
+            <option value="corporate">Corporate</option>
+            <option value="job_hunting">Job Hunting</option>
+            <option value="ai_use_case">AI Use Case</option>
+            <option value="startup">Startup</option>
+          </select>
+        </label>
+
+        <label class="tfc-field">
+          <span>Speed Profile</span>
+          <select id="speedSelect">
+            <option value="safe">Safe</option>
+            <option value="balanced">Balanced</option>
+            <option value="fast">Fast</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="tfc-field tfc-field-block">
+        <label class="tfc-check">
+          <input id="profileDeepScan" type="checkbox" />
+          <span>Profile deep scan</span>
+        </label>
+      </section>
+
+      <section class="tfc-tag-grid">
+        <label class="tfc-check"><input type="checkbox" class="tag-check" value="software_engineering" checked /> <span>Software Eng</span></label>
+        <label class="tfc-check"><input type="checkbox" class="tag-check" value="meme" checked /> <span>Meme</span></label>
+        <label class="tfc-check"><input type="checkbox" class="tag-check" value="general_take" checked /> <span>General Take</span></label>
+        <label class="tfc-check"><input type="checkbox" class="tag-check" value="corporate" checked /> <span>Corporate</span></label>
+        <label class="tfc-check"><input type="checkbox" class="tag-check" value="job_hunting" checked /> <span>Job Hunting</span></label>
+        <label class="tfc-check"><input type="checkbox" class="tag-check" value="ai_use_case" checked /> <span>AI Use Case</span></label>
+        <label class="tfc-check"><input type="checkbox" class="tag-check" value="startup" checked /> <span>Startup</span></label>
+      </section>
+
+      <section class="tfc-popup-actions">
+        <button id="startBtn" class="tfc-btn tfc-btn-primary">Start</button>
+        <button id="pauseBtn" class="tfc-btn">Pause</button>
+        <button id="resumeBtn" class="tfc-btn">Resume</button>
+        <button id="stopBtn" class="tfc-btn tfc-btn-danger">Stop</button>
+      </section>
+
+      <section class="tfc-popup-actions">
+        <button id="exportMdBtn" class="tfc-btn tfc-btn-secondary">Export Markdown</button>
+        <button id="exportJsonBtn" class="tfc-btn">Export JSON</button>
+      </section>
+
+      <section class="tfc-stats">
+        <div><strong>Status:</strong> <span id="statusValue">-</span></div>
+        <div><strong>Captured:</strong> <span id="countValue">0</span></div>
+      </section>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Twitter Feed Capture - Relevance Scanner v2",
+  "version": "2.0.0",
+  "description": "Fast, client-side Twitter/X scanner with tag modes, profile deep scan, pause/resume controls, and Markdown export.",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://twitter.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Scanner Control",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/*",
+        "https://twitter.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "styles.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
