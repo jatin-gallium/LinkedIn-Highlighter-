@@ -1374,11 +1374,21 @@
             '<option value="compact">Compact</option>' +
             '<option value="exact">Exact</option>' +
           '</select>' +
-          '<label class="leh-mini-check" title="Show only suspect parsing results"><input type="checkbox" id="leh-suspect-only" /> Suspects</label>' +
-          '<button id="leh-suspect-next" class="leh-card-btn" title="Jump to next suspect count">Next Suspect</button>' +
-          '<button id="leh-shrink-toggle" class="leh-card-btn" title="Toggle compact view">Shrink</button>' +
+          '<label class="leh-mini-check" title="Show only posts that need review"><input type="checkbox" id="leh-suspect-only" /> Needs review only</label>' +
+          '<button id="leh-suspect-next" class="leh-card-btn" title="Jump to next post that needs review">Next to review</button>' +
+          '<button id="leh-shrink-toggle" class="leh-card-btn" title="Toggle compact view">Compact list</button>' +
         '</div>' +
       '</div>' +
+      '<div class="leh-quick-start">' +
+        '<div class="leh-quick-start-title">Quick start</div>' +
+        '<ol class="leh-quick-start-list">' +
+          '<li>Search by keyword or author</li>' +
+          '<li>Use filters (date/media)</li>' +
+          '<li>Click a post card to jump to it</li>' +
+          '<li>Use <strong>Extract Top Posts</strong> to export</li>' +
+        '</ol>' +
+      '</div>' +
+      '<button id="leh-advanced-toggle" class="leh-link-btn" type="button">Show advanced parsing details</button>' +
       '<div id="leh-parser-diagnostics" class="leh-parser-diagnostics"></div>' +
       '<div id="leh-post-list" class="leh-post-list"></div>' +
 
@@ -1928,6 +1938,21 @@
       '<span class="leh-diag-chip">jumps: ' + jumps + "</span>" +
       (suspectOnlyMode ? '<span class="leh-diag-chip leh-diag-chip-active">suspects only</span>' : "") +
       (countDisplayMode === "exact" ? '<span class="leh-diag-chip">view: exact</span>' : '<span class="leh-diag-chip">view: compact</span>') +
+      "</div>"
+    );
+  }
+
+  function getQuickHelpHTML() {
+    return (
+      '<div class="leh-quick-help-inner">' +
+      '<strong>Quick Start</strong>' +
+      '<ol>' +
+      '<li>Scroll LinkedIn feed/activity to load posts.</li>' +
+      '<li>Use Search to find keywords or authors.</li>' +
+      '<li>Click <em>Extract Top Posts</em> to export results.</li>' +
+      '<li>If numbers look odd, use <em>Next issue</em>.</li>' +
+      "</ol>" +
+      '<div class="leh-quick-help-tip">Tip: Keep Advanced stats off unless you are debugging.</div>' +
       "</div>"
     );
   }

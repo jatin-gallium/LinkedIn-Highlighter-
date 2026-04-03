@@ -1578,6 +1578,43 @@ body.leh-sidebar-open #leh-sidebar-tab {
   font-size: 10px;
 }
 
+/* Beginner-friendly simplification mode */
+.leh-simple-chip {
+  font-size: 10px;
+  color: var(--leh-text-secondary);
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #fff;
+  white-space: nowrap;
+}
+
+.leh-simple-chip.is-active {
+  background: var(--leh-primary);
+  color: #fff;
+  border-color: var(--leh-primary);
+}
+
+.leh-posts-toolbar-actions {
+  flex-wrap: wrap;
+}
+
+#leh-suspect-next {
+  min-width: 120px;
+}
+
+#leh-toggle-advanced {
+  min-width: 126px;
+}
+
+.leh-parser-diagnostics {
+  display: none;
+}
+
+.leh-parser-diagnostics.is-visible {
+  display: block;
+}
+
 .leh-post-list {
   padding: 6px 10px;
 }
@@ -1985,5 +2022,72 @@ body.leh-sidebar-open #leh-sidebar-tab {
   }
   .leh-post-card:hover {
     box-shadow: 0 10px 18px rgba(2, 6, 23, 0.45);
+  }
+}
+
+/* ─── Beginner-friendly simplification layer ─────────────────────── */
+
+.leh-help-strip {
+  margin: 4px 10px 8px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(10, 102, 194, 0.18);
+  background: linear-gradient(180deg, rgba(10, 102, 194, 0.06), rgba(10, 102, 194, 0.02));
+  font-size: 10px;
+  color: var(--leh-text-secondary);
+  line-height: 1.45;
+}
+
+.leh-help-strip strong {
+  color: var(--leh-primary-dark);
+}
+
+.leh-posts-toolbar-actions {
+  gap: 6px;
+}
+
+.leh-select-compact {
+  min-width: 92px;
+}
+
+.leh-mini-check {
+  border-radius: 8px;
+  padding: 4px 7px;
+}
+
+.leh-card-btn {
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 10px;
+}
+
+.leh-parser-diagnostics {
+  display: none;
+}
+
+.leh-parser-diagnostics.leh-show-advanced {
+  display: block;
+}
+
+.leh-advanced-toggle {
+  margin-left: auto;
+  border-radius: 7px;
+  padding: 3px 8px;
+  font-size: 10px;
+}
+
+.leh-search-count {
+  opacity: 0.9;
+}
+
+@media (prefers-color-scheme: dark) {
+  .leh-help-strip {
+    border-color: rgba(92, 174, 232, 0.24);
+    background: linear-gradient(180deg, rgba(92, 174, 232, 0.14), rgba(92, 174, 232, 0.07));
+    color: #b3c8d8;
+  }
+
+  .leh-help-strip strong {
+    color: #d8ebff;
   }
 }
