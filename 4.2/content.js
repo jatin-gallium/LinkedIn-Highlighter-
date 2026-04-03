@@ -267,6 +267,11 @@
 
   function getMainArea() {
     return (
+      document.querySelector(".scaffold-layout__list") ||
+      document.querySelector(".scaffold-layout__list-container") ||
+      document.querySelector('[data-test-id="feed-container"]') ||
+      document.querySelector("#main-feed") ||
+      document.querySelector("main .scaffold-finite-scroll__content") ||
       document.querySelector("main") ||
       document.querySelector(".scaffold-layout__main") ||
       document.querySelector('[role="main"]') ||
@@ -285,22 +290,38 @@
     const main = getMainArea();
     const found = new Set();
 
-    // Strategy 1: Known LinkedIn class
-    main.querySelectorAll(".feed-shared-update-v2").forEach((el) => {
+    // Strategy 1: Known LinkedIn class (exact + partial — LI often appends hashed suffixes)
+    main.querySelectorAll(".feed-shared-update-v2, [class*='feed-shared-update-v2']").forEach((el) => {
       if (!isInsideAside(el)) found.add(el);
     });
 
-    // Strategy 2: data-urn for activity / ugcPost
+    // Strategy 1b: Newer update component roots (also hashed in production)
+    main.querySelectorAll("[class*='update-components-update']").forEach((el) => {
+      if (!isInsideAside(el)) found.add(el);
+    });
+
+    // Strategy 2: data-urn for activity / ugcPost / share / etc.
     main
-      .querySelectorAll('div[data-urn*="urn:li:activity"], div[data-urn*="urn:li:ugcPost"]')
+      .querySelectorAll(
+        'div[data-urn*="urn:li:activity"], div[data-urn*="urn:li:ugcPost"], div[data-urn*="urn:li:share"], [data-urn*="urn:li:fs_miniUpdate"]'
+      )
       .forEach((el) => {
         if (!isInsideAside(el)) found.add(el);
       });
 
+    // Strategy 2b: URN on nested nodes (feed cards sometimes hoist urn on inner div)
+    main
+      .querySelectorAll('[data-urn*="urn:li:"]')
+      .forEach((el) => {
+        if (isInsideAside(el)) return;
+        if (el.matches("div, article, section")) found.add(el);
+      });
+
     // Strategy 3: Occludable wrappers (virtual scroll)
-    main.querySelectorAll(".occludable-update").forEach((wrapper) => {
+    main.querySelectorAll(".occludable-update, [class*='occludable-update']").forEach((wrapper) => {
       if (isInsideAside(wrapper)) return;
-      const inner = wrapper.querySelector(".feed-shared-update-v2");
+      const inner =
+        wrapper.querySelector(".feed-shared-update-v2, [class*='feed-shared-update-v2'], [class*='update-components-update']");
       found.add(inner || wrapper);
     });
 
@@ -313,9 +334,11 @@
         if (post) found.add(post);
       });
 
-    // Strategy 5: Walk up from social-action bars (V4.1: exact classes only)
+    // Strategy 5: Walk up from social-action bars (exact + partial class match)
     main
-      .querySelectorAll('.feed-shared-social-actions, .social-details-social-activity')
+      .querySelectorAll(
+        '.feed-shared-social-actions, .social-details-social-activity, [class*="social-actions"], [class*="social-details-social-activity"]'
+      )
       .forEach((bar) => {
         if (isInsideAside(bar)) return;
         const post = walkUpToPost(bar, main);
@@ -348,17 +371,30 @@
     return deduplicatePosts(Array.from(found));
   }
 
+  function looksLikeFeedCard(el) {
+    if (!el || !el.classList) return false;
+    const c = el.className;
+    if (typeof c !== "string") return false;
+    return (
+      c.includes("feed-shared-update") ||
+      c.includes("update-components-update") ||
+      c.includes("occludable-update")
+    );
+  }
+
   function walkUpToPost(startEl, boundary, maxSteps) {
-    maxSteps = maxSteps || 8;
+    maxSteps = maxSteps || 14;
     let el = startEl;
     for (let i = 0; i < maxSteps && el && el !== boundary && el !== document.body; i++) {
       el = el.parentElement;
       if (!el) break;
+      const urn = el.getAttribute("data-urn") || "";
       if (
-        el.getAttribute("data-urn") ||
+        (urn && urn.includes("urn:li:")) ||
         el.getAttribute("data-id") ||
         el.classList.contains("feed-shared-update-v2") ||
-        el.classList.contains("occludable-update")
+        el.classList.contains("occludable-update") ||
+        looksLikeFeedCard(el)
       ) {
         return el;
       }
@@ -369,7 +405,7 @@
     for (let i = 0; i < maxSteps && el && el !== boundary && el !== document.body; i++) {
       el = el.parentElement;
       if (!el) break;
-      if (el.offsetHeight >= 150 && el.offsetWidth >= 300) {
+      if (el.offsetHeight >= 120 && el.offsetWidth >= 260) {
         if (isInsideAside(el)) return null;
         if (el.querySelector("button") && el.querySelector("time")) return el;
       }
@@ -843,13 +879,26 @@
     const hasEngagement = eng.reactions > 0 || eng.comments > 0 || eng.reposts > 0;
     const hasCaption = (meta.fullCaption || "").length > 10;
     const hasUrl = !!meta.postUrl;
-    const hasUrn = (element.getAttribute("data-urn") || "").includes("urn:li:");
+    const urnAttr = element.getAttribute("data-urn") || "";
+    const hasUrn = urnAttr.includes("urn:li:");
+    const hasNestedUrn = !!element.querySelector('[data-urn*="urn:li:"]');
+    const hasTime = !!element.querySelector("time");
+    const pt = getPageType();
+    const feedLike = pt === "feed" || pt === "company" || pt === "search";
+    // Feed: LinkedIn often hides counts behind "···" until interaction — still a real card if it has time + urn shell
+    if (feedLike && hasTime && (hasUrn || hasNestedUrn || looksLikeFeedCard(element))) return true;
     // Must have at least ONE real signal
-    return hasEngagement || hasCaption || hasUrl || hasUrn;
+    return hasEngagement || hasCaption || hasUrl || hasUrn || hasNestedUrn;
   }
 
   // V4.1: Safety filter for export/display — checks stored data
   function hasSignal(data) {
+    const el = data.element;
+    const pt = getPageType();
+    const feedLike = pt === "feed" || pt === "company" || pt === "search";
+    if (feedLike && el && el.isConnected) {
+      if (el.querySelector("time") && (el.querySelector('[data-urn*="urn:li:"]') || looksLikeFeedCard(el))) return true;
+    }
     return (
       data.engagement.reactions > 0 ||
       data.engagement.comments > 0 ||
@@ -1313,7 +1362,7 @@
           '<path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" fill="currentColor"/>' +
         '</svg>' +
         '<span class="leh-sidebar-title">Engagement Highlighter</span>' +
-        '<span class="leh-version-badge">v4.2</span>' +
+        '<span class="leh-version-badge">v4.2.2</span>' +
       '</div>' +
       '<button class="leh-header-close" title="Close sidebar">&times;</button>' +
     '</div>' +
