@@ -82,7 +82,8 @@
   const idToNode = new Map();
   let deepScanCheckpoint = null;
   let pendingStorageWrite = false;
-  let scanIntervalHandle = null;
+  let scanTimeoutHandle = null;
+  let loopInFlight = false;
   let renderScheduled = false;
   let observer = null;
   let intersectionObserver = null;
@@ -383,6 +384,17 @@
     return Math.round(num);
   }
 
+  function parseFirstNumberToken(text) {
+    if (!text) {
+      return 0;
+    }
+    const m = String(text).match(/(\d[\d,.]*\.?\d*[kKmM]?)/);
+    if (!m) {
+      return 0;
+    }
+    return parseNumericToken(m[1]);
+  }
+
   function extractMetricsFromText(text) {
     const normalized = text || "";
     const metrics = {
@@ -404,6 +416,65 @@
       }
     }
     return metrics;
+  }
+
+  function extractCounterValue(actionNode) {
+    if (!actionNode) {
+      return 0;
+    }
+    const counterNode =
+      actionNode.querySelector("[data-testid='app-text-transition-container']") ||
+      actionNode.querySelector("span[aria-hidden='true']") ||
+      actionNode.querySelector("span");
+    const candidates = [
+      actionNode.getAttribute("aria-label"),
+      actionNode.getAttribute("title"),
+      counterNode?.textContent,
+      actionNode.textContent
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return parseFirstNumberToken(candidates);
+  }
+
+  function extractMetricsFromNode(node) {
+    const metrics = {
+      replies: 0,
+      reposts: 0,
+      likes: 0,
+      views: 0
+    };
+    const selectors = [
+      "[data-testid='reply']",
+      "[data-testid='retweet']",
+      "[data-testid='unretweet']",
+      "[data-testid='like']",
+      "[data-testid='unlike']",
+      "a[href*='/analytics']"
+    ];
+    const actions = node.querySelectorAll(selectors.join(","));
+    actions.forEach((actionNode) => {
+      const labelText = `${actionNode.getAttribute("aria-label") || ""} ${actionNode.textContent || ""}`.toLowerCase();
+      const value = extractCounterValue(actionNode);
+      if (labelText.includes("repl")) {
+        metrics.replies = Math.max(metrics.replies, value);
+      } else if (labelText.includes("retweet") || labelText.includes("repost")) {
+        metrics.reposts = Math.max(metrics.reposts, value);
+      } else if (labelText.includes("like")) {
+        metrics.likes = Math.max(metrics.likes, value);
+      } else if (labelText.includes("view") || labelText.includes("analytics")) {
+        metrics.views = Math.max(metrics.views, value);
+      }
+    });
+
+    // Fallback for layout variants where action counters are only visible in plain text.
+    const fallback = extractMetricsFromText(node.textContent || "");
+    return {
+      replies: Math.max(metrics.replies, fallback.replies),
+      reposts: Math.max(metrics.reposts, fallback.reposts),
+      likes: Math.max(metrics.likes, fallback.likes),
+      views: Math.max(metrics.views, fallback.views)
+    };
   }
 
   function extractPostIdFromNode(node) {
@@ -561,7 +632,7 @@
     const author = extractAuthor(node);
     const createdAt = extractTime(node);
     const url = extractPostUrl(node);
-    const metrics = extractMetricsFromText(node.textContent || "");
+    const metrics = extractMetricsFromNode(node);
 
     const base = {
       id,
@@ -590,7 +661,12 @@
       return { added: true, updated: false, id };
     }
 
-    const contentChanged = existing.text !== merged.text || existing.metrics.likes !== merged.metrics.likes || existing.metrics.reposts !== merged.metrics.reposts || existing.metrics.replies !== merged.metrics.replies;
+    const contentChanged =
+      existing.text !== merged.text ||
+      existing.metrics.likes !== merged.metrics.likes ||
+      existing.metrics.reposts !== merged.metrics.reposts ||
+      existing.metrics.replies !== merged.metrics.replies ||
+      existing.metrics.views !== merged.metrics.views;
     if (contentChanged) {
       postStore.set(id, {
         ...existing,
@@ -760,22 +836,40 @@
   }
 
   function clearLoop() {
-    if (scanIntervalHandle) {
-      clearInterval(scanIntervalHandle);
-      scanIntervalHandle = null;
+    if (scanTimeoutHandle) {
+      clearTimeout(scanTimeoutHandle);
+      scanTimeoutHandle = null;
     }
   }
 
-  function startLoop() {
+  function scheduleNextTick() {
+    if (!state.running || state.paused) {
+      clearLoop();
+      return;
+    }
     clearLoop();
     const delay = computeDelayMs();
-    scanIntervalHandle = setInterval(() => {
-      loopTick();
+    scanTimeoutHandle = setTimeout(() => {
+      if (loopInFlight) {
+        scheduleNextTick();
+        return;
+      }
+      loopInFlight = true;
+      try {
+        loopTick();
+      } finally {
+        loopInFlight = false;
+      }
+      scheduleNextTick();
     }, delay);
   }
 
+  function startLoop() {
+    scheduleNextTick();
+  }
+
   function refreshLoopCadence() {
-    if (!state.running) {
+    if (!state.running || state.paused) {
       clearLoop();
       return;
     }
