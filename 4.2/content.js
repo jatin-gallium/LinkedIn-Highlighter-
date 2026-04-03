@@ -62,6 +62,17 @@
   let compactPostCards = false;
   let suspectOnlyMode = false;
   let suspectCursor = -1;
+  let sidebarMainTab = "analyze"; // "analyze" | "library"
+
+  // Personal library (chrome.storage.local) — profiles to visit + bookmarked inspo posts
+  const MAX_SAVED_POSTS = 200;
+  const MAX_VISIT_ENTRIES = 120;
+  /** @type {Map<string, object>} */
+  const savedPostsByKey = new Map();
+  /** @type {Array<{id:string,url:string,label:string,note:string,addedAt:number}>} */
+  let visitList = [];
+  /** Keys that were bookmarked in storage (survives postStore eviction until you un-star). */
+  let restoredBookmarkKeySet = new Set();
 
   // Session
   const sessionStart = Date.now();
@@ -81,6 +92,207 @@
       hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
     }
     return "leh-gen-" + hash;
+  }
+
+  function newVisitId() {
+    return "v" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+  }
+
+  function normalizeLinkedInUrl(input) {
+    let u = String(input || "").trim();
+    if (!u) return "";
+    if (!/^https?:\/\//i.test(u)) {
+      if (/^in\//i.test(u)) u = "https://www.linkedin.com/" + u.replace(/^\/+/, "");
+      else if (/^company\//i.test(u)) u = "https://www.linkedin.com/" + u.replace(/^\/+/, "");
+      else if (/^linkedin\.com\//i.test(u)) u = "https://www." + u;
+      else if (/^[A-Za-z0-9_-]{3,100}$/.test(u)) u = "https://www.linkedin.com/in/" + u + "/";
+    }
+    try {
+      const parsed = new URL(u);
+      const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+      if (host !== "linkedin.com" && !host.endsWith(".linkedin.com")) return "";
+      return parsed.toString();
+    } catch {
+      return "";
+    }
+  }
+
+  function trimSavedPostsMap() {
+    while (savedPostsByKey.size > MAX_SAVED_POSTS) {
+      let oldestKey = null;
+      let oldestAt = Infinity;
+      for (const [k, row] of savedPostsByKey) {
+        const t = row.savedAt || 0;
+        if (t < oldestAt) {
+          oldestAt = t;
+          oldestKey = k;
+        }
+      }
+      if (oldestKey) savedPostsByKey.delete(oldestKey);
+      else break;
+    }
+  }
+
+  function upsertSavedPostSnapshot(pd) {
+    if (!pd || !pd.bookmarked) return;
+    const raw = (pd.hook || pd.caption || "").replace(/\s+/g, " ").trim();
+    const snippet = raw.length > 280 ? raw.slice(0, 277) + "..." : raw;
+    savedPostsByKey.set(pd.key, {
+      key: pd.key,
+      postUrl: pd.postUrl || "",
+      author: pd.username || "",
+      profileUrl: pd.profileUrl || "",
+      snippet,
+      score: pd.score || 0,
+      savedAt: Date.now(),
+    });
+    trimSavedPostsMap();
+  }
+
+  function syncBookmarkUiForKey(key) {
+    const pd = postStore.get(key);
+    const on = !!(pd && pd.bookmarked);
+    document.querySelectorAll('.leh-badge-btn[data-action="bookmark"]').forEach((btn) => {
+      if (btn.getAttribute("data-key") !== key) return;
+      btn.classList.toggle("leh-bookmarked", on);
+      btn.textContent = on ? "\u2605" : "\u2606";
+    });
+    const list = document.getElementById("leh-post-list");
+    if (list) {
+      list.querySelectorAll('.leh-card-btn[data-action="bookmark"]').forEach((btn) => {
+        if (btn.getAttribute("data-key") !== key) return;
+        btn.classList.toggle("leh-bookmarked", on);
+        btn.textContent = on ? "\u2605" : "\u2606";
+      });
+    }
+  }
+
+  function setBookmarked(key, next) {
+    const pd = postStore.get(key);
+    if (pd) pd.bookmarked = !!next;
+    if (next) {
+      if (pd) upsertSavedPostSnapshot(pd);
+      restoredBookmarkKeySet.add(key);
+    } else {
+      savedPostsByKey.delete(key);
+      restoredBookmarkKeySet.delete(key);
+    }
+    syncBookmarkUiForKey(key);
+    if (sidebarMainTab === "library") renderLibraryPanel();
+    saveSettings();
+  }
+
+  function toggleBookmark(key) {
+    const pd = postStore.get(key);
+    if (!pd) return;
+    setBookmarked(key, !pd.bookmarked);
+  }
+
+  function applyLibraryPayload(lib) {
+    visitList = Array.isArray(lib?.visitList) ? lib.visitList.slice(0, MAX_VISIT_ENTRIES) : [];
+    savedPostsByKey.clear();
+    if (Array.isArray(lib?.savedPosts)) {
+      for (const row of lib.savedPosts) {
+        if (row && row.key) savedPostsByKey.set(row.key, row);
+      }
+      trimSavedPostsMap();
+    }
+  }
+
+  function renderLibraryPanel() {
+    const visitHost = document.getElementById("leh-visit-list");
+    const savedHost = document.getElementById("leh-saved-list");
+    const addCur = document.getElementById("leh-add-current-profile");
+    if (addCur) {
+      const path = window.location.pathname || "";
+      const m = path.match(/^\/in\/([A-Za-z0-9_-]+)/);
+      addCur.style.display = m ? "inline-flex" : "none";
+      if (m) addCur.setAttribute("data-vanity", m[1]);
+    }
+    if (visitHost) {
+      if (!visitList.length) {
+        visitHost.innerHTML =
+          '<div class="leh-lib-empty">No profiles yet. Paste a profile URL or vanity slug, or use <strong>Add this profile</strong> when you are on someone’s page.</div>';
+      } else {
+        let h = "";
+        for (const v of visitList) {
+          const label = escHtml(v.label || "Profile");
+          const note = v.note ? '<span class="leh-lib-note">' + escHtml(v.note) + "</span>" : "";
+          h +=
+            '<div class="leh-lib-row" data-visit-id="' + escHtml(v.id) + '">' +
+            '<div class="leh-lib-row-main">' +
+            '<a class="leh-lib-link" href="' + escHtml(v.url) + '" target="_blank" rel="noopener">' + label + "</a>" +
+            note +
+            "</div>" +
+            '<button type="button" class="leh-lib-icon-btn" data-action="remove-visit" title="Remove">\u2715</button>' +
+            "</div>";
+        }
+        visitHost.innerHTML = h;
+      }
+    }
+    if (savedHost) {
+      const rows = Array.from(savedPostsByKey.values()).sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+      if (!rows.length) {
+        savedHost.innerHTML =
+          '<div class="leh-lib-empty">Star a post from the list or the on-post badge to save it here as inspo. Everything stays in this browser only.</div>';
+      } else {
+        let h = "";
+        for (const r of rows) {
+          const title = escHtml(r.author || "Saved post");
+          const snip = escHtml(r.snippet || "");
+          const href = r.postUrl ? escHtml(r.postUrl) : "";
+          h +=
+            '<div class="leh-lib-row" data-saved-key="' + escHtml(r.key) + '">' +
+            '<div class="leh-lib-row-main">' +
+            (href
+              ? '<a class="leh-lib-link" href="' + href + '" target="_blank" rel="noopener">' + title + "</a>"
+              : "<span class='leh-lib-link leh-lib-link-muted'>" + title + "</span>") +
+            (r.profileUrl
+              ? '<a class="leh-lib-subtle" href="' + escHtml(r.profileUrl) + '" target="_blank" rel="noopener">Profile</a>'
+              : "") +
+            (snip ? '<div class="leh-lib-snippet">' + snip + "</div>" : "") +
+            "</div>" +
+            '<button type="button" class="leh-lib-icon-btn" data-action="remove-saved" title="Remove from library">\u2715</button>' +
+            "</div>";
+        }
+        savedHost.innerHTML = h;
+      }
+    }
+  }
+
+  function setMainSidebarTab(tab) {
+    sidebarMainTab = tab === "library" ? "library" : "analyze";
+    const paneA = document.getElementById("leh-pane-analyze");
+    const paneL = document.getElementById("leh-pane-library");
+    const btnA = document.getElementById("leh-tab-analyze");
+    const btnL = document.getElementById("leh-tab-library");
+    if (paneA) paneA.classList.toggle("leh-pane-hidden", sidebarMainTab !== "analyze");
+    if (paneL) paneL.classList.toggle("leh-pane-hidden", sidebarMainTab !== "library");
+    if (btnA) {
+      btnA.classList.toggle("leh-tab-active", sidebarMainTab === "analyze");
+      btnA.setAttribute("aria-selected", sidebarMainTab === "analyze" ? "true" : "false");
+    }
+    if (btnL) {
+      btnL.classList.toggle("leh-tab-active", sidebarMainTab === "library");
+      btnL.setAttribute("aria-selected", sidebarMainTab === "library" ? "true" : "false");
+    }
+    if (sidebarMainTab === "library") renderLibraryPanel();
+    saveSettings();
+  }
+
+  function exportLibraryJson() {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      version: 1,
+      visitList,
+      savedPosts: Array.from(savedPostsByKey.values()),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "linkedin-engagement-library.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   // ─── Page Type ─────────────────────────────────────────────────────
@@ -656,7 +868,8 @@
 
   function extractPostMeta(postInfo) {
     const post = postInfo.element;
-    let username = "";
+    let profileSlug = "";
+    let profileKind = ""; // "person" | "company"
     let displayName = "";
     let postUrl = "";
     let fullCaption = "";
@@ -676,28 +889,40 @@
       const href = link.getAttribute("href") || "";
       const um = href.match(/\/in\/([A-Za-z0-9_-]+)/);
       if (um) {
-        username = um[1];
+        profileSlug = um[1];
+        profileKind = "person";
         if (!displayName) displayName = (link.textContent || "").trim().replace(/\s+/g, " ");
         break;
       }
     }
-    if (!username) {
+    if (!profileSlug) {
       for (const link of post.querySelectorAll('a[href*="/company/"]')) {
         const href = link.getAttribute("href") || "";
         const cm = href.match(/\/company\/([A-Za-z0-9_-]+)/);
         if (cm) {
-          username = cm[1];
+          profileSlug = cm[1];
+          profileKind = "company";
           if (!displayName) displayName = (link.textContent || "").trim().replace(/\s+/g, " ");
           break;
         }
       }
     }
-    if (!username) {
+    if (!profileSlug) {
       const pt = getPageType();
       if (pt === "activity" || pt === "profile") {
         const pm = window.location.pathname.match(/\/in\/([A-Za-z0-9_-]+)/);
-        if (pm) username = pm[1];
+        if (pm) {
+          profileSlug = pm[1];
+          profileKind = "person";
+        }
       }
+    }
+
+    let profileUrl = "";
+    if (profileSlug && profileKind === "company") {
+      profileUrl = "https://www.linkedin.com/company/" + profileSlug + "/";
+    } else if (profileSlug && profileKind === "person") {
+      profileUrl = "https://www.linkedin.com/in/" + profileSlug + "/";
     }
 
     // Post URL
@@ -750,7 +975,10 @@
     date = extractPostDate(post);
 
     return {
-      username: displayName || username || "",
+      username: displayName || profileSlug || "",
+      profileSlug: profileSlug || "",
+      profileKind: profileKind || "",
+      profileUrl: profileUrl || "",
       postUrl,
       caption: fullText.length > 300 ? fullText.substring(0, 297) + "..." : fullText,
       fullCaption,
@@ -952,14 +1180,7 @@
         const action = btn.getAttribute("data-action");
         const k = btn.getAttribute("data-key");
         if (action === "bookmark") {
-          const pd = postStore.get(k);
-          if (pd) {
-            pd.bookmarked = !pd.bookmarked;
-            btn.classList.toggle("leh-bookmarked", pd.bookmarked);
-            btn.textContent = pd.bookmarked ? "\u2605" : "\u2606";
-            updateSidebar();
-            saveSettings();
-          }
+          toggleBookmark(k);
         } else if (action === "copy") {
           const pd = postStore.get(k);
           if (pd) {
@@ -1029,6 +1250,9 @@
         suspiciousJump: suspiciousJumpDetected(previousEngagement, eng),
         date: meta.date,
         username: meta.username,
+        profileSlug: meta.profileSlug || "",
+        profileKind: meta.profileKind || "",
+        profileUrl: meta.profileUrl || "",
         postUrl: meta.postUrl,
         caption: meta.caption,
         fullCaption: meta.fullCaption,
@@ -1036,7 +1260,7 @@
         mediaType: meta.mediaType,
         firstSeen: existing ? existing.firstSeen : Date.now(),
         lastSeen: Date.now(),
-        bookmarked: existing ? existing.bookmarked : false,
+        bookmarked: existing ? existing.bookmarked : restoredBookmarkKeySet.has(key),
       };
 
       // Cap store size
@@ -1054,6 +1278,7 @@
       }
 
       postStore.set(key, entry);
+      if (entry.bookmarked) upsertSavedPostSnapshot(entry);
       visibleEntries.push(entry);
     }
 
@@ -1162,6 +1387,7 @@
     // Ensure observer follows new page shell, then refresh extracted data.
     attachObserverToTarget(getMainArea());
     scheduleRouteRefreshes();
+    if (sidebarMainTab === "library") renderLibraryPanel();
   }
 
   function setupNavigationListener() {
@@ -1365,6 +1591,13 @@
     // Scrollable body
     '<div class="leh-sidebar-body">' +
 
+    '<div class="leh-tabstrip" role="tablist" aria-label="Sidebar sections">' +
+      '<button type="button" id="leh-tab-analyze" class="leh-tab-btn leh-tab-active" role="tab" aria-selected="true">Analyze</button>' +
+      '<button type="button" id="leh-tab-library" class="leh-tab-btn" role="tab" aria-selected="false">Library</button>' +
+    '</div>' +
+
+    '<div id="leh-pane-analyze" class="leh-tab-pane" role="tabpanel">' +
+
       // Post list
       // V4.1: Shrink/Expand toggle for post feed
       '<div class="leh-posts-toolbar">' +
@@ -1388,8 +1621,8 @@
           '<li>Use <strong>Extract Top Posts</strong> to export</li>' +
         '</ol>' +
       '</div>' +
-      '<button id="leh-advanced-toggle" class="leh-link-btn" type="button">Show advanced parsing details</button>' +
-      '<div id="leh-parser-diagnostics" class="leh-parser-diagnostics"></div>' +
+      '<button id="leh-advanced-toggle" class="leh-link-btn" type="button" aria-expanded="false">Show parser stats</button>' +
+      '<div id="leh-parser-diagnostics" class="leh-parser-diagnostics" aria-hidden="true"></div>' +
       '<div id="leh-post-list" class="leh-post-list"></div>' +
 
       // Settings section
@@ -1491,6 +1724,31 @@
         '</div>' +
       '</div>' +
 
+    '</div>' + // end pane-analyze
+
+    '<div id="leh-pane-library" class="leh-tab-pane leh-pane-hidden" role="tabpanel">' +
+      '<div class="leh-lib-intro">' +
+        'Your visit list and starred posts stay in this browser (extension storage). No cloud sync unless you export.' +
+      '</div>' +
+      '<div class="leh-lib-block">' +
+        '<div class="leh-lib-heading">Profiles to visit</div>' +
+        '<div class="leh-lib-hint">Paste a profile URL, company URL, or vanity slug (e.g. <code>in/someone</code>).</div>' +
+        '<div class="leh-lib-form">' +
+          '<input type="text" id="leh-visit-url" class="leh-lib-input" placeholder="https://www.linkedin.com/in/…" autocomplete="off" />' +
+          '<input type="text" id="leh-visit-note" class="leh-lib-input leh-lib-input-note" placeholder="Note (optional)" autocomplete="off" />' +
+          '<button type="button" id="leh-visit-add" class="leh-btn leh-btn-primary leh-btn-inline">Add</button>' +
+        '</div>' +
+        '<button type="button" id="leh-add-current-profile" class="leh-btn leh-btn-secondary leh-btn-inline-full" style="display:none;">Add this profile page</button>' +
+        '<div id="leh-visit-list" class="leh-lib-list"></div>' +
+      '</div>' +
+      '<div class="leh-lib-block">' +
+        '<div class="leh-lib-heading">Inspo (starred posts)</div>' +
+        '<div class="leh-lib-hint">Star a post in the list or on the badge to save a snapshot here.</div>' +
+        '<div id="leh-saved-list" class="leh-lib-list"></div>' +
+        '<button type="button" id="leh-export-library" class="leh-btn leh-btn-secondary">Export library as JSON</button>' +
+      '</div>' +
+    '</div>' +
+
     '</div>'; // end sidebar-body
   }
 
@@ -1503,6 +1761,97 @@
 
     // Close button
     sidebar.querySelector(".leh-header-close").addEventListener("click", toggleSidebar);
+
+    const tabAnalyze = $("leh-tab-analyze");
+    const tabLibrary = $("leh-tab-library");
+    if (tabAnalyze) tabAnalyze.addEventListener("click", () => setMainSidebarTab("analyze"));
+    if (tabLibrary) tabLibrary.addEventListener("click", () => setMainSidebarTab("library"));
+
+    const advBtn = $("leh-advanced-toggle");
+    const diagPanel = $("leh-parser-diagnostics");
+    if (advBtn && diagPanel) {
+      advBtn.addEventListener("click", () => {
+        const open = !diagPanel.classList.contains("leh-show-advanced");
+        diagPanel.classList.toggle("leh-show-advanced", open);
+        advBtn.setAttribute("aria-expanded", open ? "true" : "false");
+        diagPanel.setAttribute("aria-hidden", open ? "false" : "true");
+        advBtn.textContent = open ? "Hide parser stats" : "Show parser stats";
+      });
+    }
+
+    const visitAdd = $("leh-visit-add");
+    const visitUrl = $("leh-visit-url");
+    const visitNote = $("leh-visit-note");
+    if (visitAdd && visitUrl) {
+      visitAdd.addEventListener("click", () => {
+        const url = normalizeLinkedInUrl(visitUrl.value);
+        if (!url) {
+          visitUrl.focus();
+          return;
+        }
+        const note = (visitNote && visitNote.value) ? visitNote.value.trim() : "";
+        let label = "Profile";
+        try {
+          const p = new URL(url);
+          const segs = p.pathname.split("/").filter(Boolean);
+          if (segs.length >= 2 && (segs[0] === "in" || segs[0] === "company")) label = segs[1];
+        } catch {}
+        visitList.push({ id: newVisitId(), url, label, note, addedAt: Date.now() });
+        if (visitList.length > MAX_VISIT_ENTRIES) visitList = visitList.slice(-MAX_VISIT_ENTRIES);
+        visitUrl.value = "";
+        if (visitNote) visitNote.value = "";
+        renderLibraryPanel();
+        saveSettings();
+      });
+    }
+
+    const addCur = $("leh-add-current-profile");
+    if (addCur) {
+      addCur.addEventListener("click", () => {
+        const vanity = addCur.getAttribute("data-vanity");
+        if (!vanity) return;
+        const url = "https://www.linkedin.com/in/" + vanity + "/";
+        visitList.push({
+          id: newVisitId(),
+          url,
+          label: vanity,
+          note: "",
+          addedAt: Date.now(),
+        });
+        if (visitList.length > MAX_VISIT_ENTRIES) visitList = visitList.slice(-MAX_VISIT_ENTRIES);
+        renderLibraryPanel();
+        saveSettings();
+      });
+    }
+
+    const exportLib = $("leh-export-library");
+    if (exportLib) exportLib.addEventListener("click", exportLibraryJson);
+
+    const visitHost = $("leh-visit-list");
+    if (visitHost) {
+      visitHost.addEventListener("click", (e) => {
+        const t = e.target.closest("[data-action='remove-visit']");
+        if (!t) return;
+        const row = t.closest(".leh-lib-row");
+        const id = row && row.getAttribute("data-visit-id");
+        if (!id) return;
+        visitList = visitList.filter((v) => v.id !== id);
+        renderLibraryPanel();
+        saveSettings();
+      });
+    }
+
+    const savedHost = $("leh-saved-list");
+    if (savedHost) {
+      savedHost.addEventListener("click", (e) => {
+        const t = e.target.closest("[data-action='remove-saved']");
+        if (!t) return;
+        const row = t.closest(".leh-lib-row");
+        const key = row && row.getAttribute("data-saved-key");
+        if (!key) return;
+        setBookmarked(key, false);
+      });
+    }
 
     // Section collapse
     for (const hdr of sidebar.querySelectorAll(".leh-section-header")) {
@@ -1879,13 +2228,7 @@
         const action = btn.getAttribute("data-action");
         const key = btn.getAttribute("data-key");
         if (action === "bookmark") {
-          const pd = postStore.get(key);
-          if (pd) {
-            pd.bookmarked = !pd.bookmarked;
-            btn.classList.toggle("leh-bookmarked", pd.bookmarked);
-            btn.textContent = pd.bookmarked ? "\u2605" : "\u2606";
-            saveSettings();
-          }
+          toggleBookmark(key);
         } else if (action === "copy") {
           const pd = postStore.get(key);
           if (pd) {
@@ -2334,11 +2677,13 @@
 
   function saveSettings() {
     try {
-      // Save bookmarks as array of keys
-      const bookmarkedKeys = [];
+      // Bookmarks: in-memory posts plus library snapshots (evicted posts stay starred)
+      const bookmarkedKeysSet = new Set();
       for (const [key, data] of postStore) {
-        if (data.bookmarked) bookmarkedKeys.push(key);
+        if (data.bookmarked) bookmarkedKeysSet.add(key);
       }
+      for (const key of savedPostsByKey.keys()) bookmarkedKeysSet.add(key);
+      const bookmarkedKeys = Array.from(bookmarkedKeysSet);
       chrome.storage.local.set({
         lehSettingsV42: {
           enabled,
@@ -2355,7 +2700,12 @@
           customDateFrom,
           customDateTo,
           sidebarOpen,
+          sidebarMainTab,
           bookmarkedKeys,
+        },
+        lehLibraryV42: {
+          visitList,
+          savedPosts: Array.from(savedPostsByKey.values()),
         },
       });
     } catch {}
@@ -2363,19 +2713,23 @@
 
   function loadSettings() {
     try {
-      chrome.storage.local.get(["lehSettingsV42", "lehSettingsV40", "lehSettingsV33"], (res) => {
-        if (res?.lehSettingsV42) {
-          applySettings(res.lehSettingsV42);
-          return;
+      chrome.storage.local.get(
+        ["lehSettingsV42", "lehSettingsV40", "lehSettingsV33", "lehLibraryV42"],
+        (res) => {
+          if (res?.lehLibraryV42) applyLibraryPayload(res.lehLibraryV42);
+          if (res?.lehSettingsV42) {
+            applySettings(res.lehSettingsV42);
+            return;
+          }
+          if (res?.lehSettingsV40) {
+            applySettings(res.lehSettingsV40);
+            return;
+          }
+          if (res?.lehSettingsV33) {
+            applySettings(res.lehSettingsV33);
+          }
         }
-        if (res?.lehSettingsV40) {
-          applySettings(res.lehSettingsV40);
-          return;
-        }
-        if (res?.lehSettingsV33) {
-          applySettings(res.lehSettingsV33);
-        }
-      });
+      );
     } catch {}
   }
 
@@ -2394,13 +2748,17 @@
     customDateFrom = s.customDateFrom ?? "";
     customDateTo = s.customDateTo ?? "";
     sidebarOpen = s.sidebarOpen ?? true;
+    sidebarMainTab = s.sidebarMainTab === "library" ? "library" : "analyze";
 
-    // Restore bookmarks
-    if (s.bookmarkedKeys) {
-      for (const key of s.bookmarkedKeys) {
-        const pd = postStore.get(key);
-        if (pd) pd.bookmarked = true;
-      }
+    restoredBookmarkKeySet = new Set(Array.isArray(s.bookmarkedKeys) ? s.bookmarkedKeys : []);
+    for (const k of savedPostsByKey.keys()) restoredBookmarkKeySet.add(k);
+    // Restore bookmarks on entries already in store
+    for (const key of restoredBookmarkKeySet) {
+      const pd = postStore.get(key);
+      if (pd) pd.bookmarked = true;
+    }
+    for (const [, v] of postStore) {
+      if (v.bookmarked) upsertSavedPostSnapshot(v);
     }
 
     const $ = (id) => document.getElementById(id);
@@ -2422,6 +2780,8 @@
     const dm = $("leh-display-mode"); if (dm) dm.value = countDisplayMode;
     const so = $("leh-suspect-only"); if (so) so.checked = suspectOnlyMode;
     const al = $("leh-auto-load-more"); if (al) al.checked = autoLoadMoreEnabled;
+
+    setMainSidebarTab(sidebarMainTab);
 
     // Scroll direction buttons
     document.querySelectorAll(".leh-scroll-dir-btn").forEach((btn) =>
