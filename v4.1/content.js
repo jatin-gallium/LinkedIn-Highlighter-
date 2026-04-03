@@ -1,17 +1,12 @@
 /**
- * LinkedIn Engagement Highlighter V4.1 - Content Script
+ * LinkedIn Engagement Highlighter V4.2 - Content Script
  *
- * V4.1 — Fixes ghost post detection + sidebar shrink toggle:
- * - Post validation gate: rejects entries with no engagement, caption, URL, or URN
- * - Tighter walkUpToPost() fallback: requires time element, excludes aside areas
- * - Exact class selectors instead of wildcards in strategies 4-5
- * - Excludes LinkedIn sidebar/aside containers from detection
- * - Safety filter in export/bulk-copy/post-list to skip zero-signal entries
- * - Shrink/Expand toggle for sidebar post card feed
- *
- * V4.0 base:
- * - Sidebar UI, persistent data store, search, media filters
- * - Bidirectional scroll, fixed engagement display, keyboard shortcuts
+ * V4.2 focus:
+ * - Accuracy-first engagement parsing with confidence labels
+ * - Suspect-number queue + jump navigation
+ * - Exact vs compact number display mode
+ * - SPA route reliability (Profile -> Activity without manual reload)
+ * - Safer defaults for non-invasive behavior
  *
  * Works on Feed, Activity, Company, Search, and Profile pages.
  * No network requests. No data collection. Fully client-side.
@@ -23,6 +18,7 @@
   // ─── State ───────────────────────────────────────────────────────────
   let enabled = true;
   let showScores = true;
+  let countDisplayMode = "exact"; // "exact" | "compact"
   let mode = "percentile";
   let absoluteThreshold = 100;
   let weights = { reactions: 5, comments: 10, reposts: 2 };
@@ -46,6 +42,7 @@
   let autoScrollRafId = null;
   let autoScrollSpeed = 3;
   let autoScrollDirection = "down"; // "down" | "up" | "paused"
+  let autoLoadMoreEnabled = false; // default off: lower automation footprint
   let lastScrollTime = 0;
   let showMoreHandled = false;
   let showMorePollId = null;
@@ -63,6 +60,8 @@
   // Sidebar
   let sidebarOpen = true;
   let compactPostCards = false;
+  let suspectOnlyMode = false;
+  let suspectCursor = -1;
 
   // Session
   const sessionStart = Date.now();
@@ -99,29 +98,167 @@
     return "feed";
   }
 
-  // ─── Number Helpers ────────────────────────────────────────────────
+  // ─── Number Helpers (V4.2 strict parser) ──────────────────────────
+  const CONFIDENCE_RANK = { low: 1, medium: 2, high: 3 };
+
+  function normalizeCountText(text) {
+    return String(text || "")
+      .replace(/[\u00A0\u202F]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function parseCountToken(token) {
+    const raw = normalizeCountText(token);
+    if (!raw) return { value: 0, confidence: "low", raw };
+
+    // Explicit compact unit: 1.2K, 2M, 3.5B
+    let m = raw.match(/^(\d+(?:[.,]\d+)?)\s*([KMB])$/i);
+    if (m) {
+      let num = m[1].replace(",", ".");
+      const n = parseFloat(num);
+      if (isNaN(n)) return { value: 0, confidence: "low", raw };
+      const mul = { K: 1e3, M: 1e6, B: 1e9 }[m[2].toUpperCase()] || 1;
+      return { value: Math.round(n * mul), confidence: "high", raw };
+    }
+
+    // Grouped integer: 1,234 or 1 234
+    m = raw.match(/^\d{1,3}(?:[,\s]\d{3})+$/);
+    if (m) {
+      return {
+        value: parseInt(raw.replace(/[,\s]/g, ""), 10) || 0,
+        confidence: "high",
+        raw,
+      };
+    }
+
+    // Plain integer
+    if (/^\d+$/.test(raw)) {
+      return { value: parseInt(raw, 10) || 0, confidence: "high", raw };
+    }
+
+    // Decimal with no explicit unit is ambiguous; accept carefully.
+    m = raw.match(/^(\d+)[.,](\d+)$/);
+    if (m) {
+      const left = m[1];
+      const right = m[2];
+      // Treat 1.000 style as grouped thousands
+      if (right.length === 3) {
+        return {
+          value: parseInt(left + right, 10) || 0,
+          confidence: "medium",
+          raw,
+        };
+      }
+      const n = parseFloat(left + "." + right);
+      return { value: isNaN(n) ? 0 : Math.round(n), confidence: "low", raw };
+    }
+
+    return { value: 0, confidence: "low", raw };
+  }
+
+  function extractCountFromTextDetailed(text) {
+    const normalized = normalizeCountText(text);
+    if (!normalized) return { value: 0, confidence: "low", raw: "" };
+
+    // Prefer explicit unit tokens first
+    let m = normalized.match(/\b(\d+(?:[.,]\d+)?\s*[KMB])\b/i);
+    if (m) {
+      const parsed = parseCountToken(m[1]);
+      return {
+        value: parsed.value,
+        confidence: parsed.value > 0 ? "medium" : "low",
+        raw: m[1],
+      };
+    }
+
+    // Then grouped integers
+    m = normalized.match(/\b(\d{1,3}(?:[,\s]\d{3})+)\b/);
+    if (m) {
+      const parsed = parseCountToken(m[1]);
+      return {
+        value: parsed.value,
+        confidence: parsed.value > 0 ? "medium" : "low",
+        raw: m[1],
+      };
+    }
+
+    // Then plain integers
+    m = normalized.match(/\b(\d+)\b/);
+    if (m) {
+      const parsed = parseCountToken(m[1]);
+      return {
+        value: parsed.value,
+        confidence: parsed.value > 0 ? "low" : "low",
+        raw: m[1],
+      };
+    }
+
+    return { value: 0, confidence: "low", raw: normalized };
+  }
+
   function parseCount(text) {
-    if (!text) return 0;
-    text = text.trim().replace(/,/g, "");
-    const m = text.match(/^([\d.]+)\s*([KMB])?$/i);
-    if (!m) return 0;
-    const num = parseFloat(m[1]);
-    if (isNaN(num)) return 0;
-    const mul = { K: 1e3, M: 1e6, B: 1e9 }[(m[2] || "").toUpperCase()] || 1;
-    return Math.round(num * mul);
+    const parsed = parseCountToken(String(text || ""));
+    if (parsed.value > 0) return parsed.value;
+    return extractCountFromTextDetailed(text).value;
   }
 
   function extractFirstNumber(text) {
-    if (!text) return 0;
-    const m = text.match(/([\d,]+\.?\d*)\s*([KMB])?/i);
-    if (!m) return 0;
-    return parseCount(m[1].replace(/,/g, "") + (m[2] || ""));
+    return extractCountFromTextDetailed(text).value;
   }
 
-  function formatCount(n) {
-    if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
-    if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, "") + "K";
-    return String(n);
+  function formatCount(n, forcedMode) {
+    const value = Math.max(0, Number(n) || 0);
+    const displayMode = forcedMode || countDisplayMode;
+    if (displayMode === "exact") return value.toLocaleString();
+    if (value >= 1e6) return (value / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+    if (value >= 1e3) return (value / 1e3).toFixed(1).replace(/\.0$/, "") + "K";
+    return String(value);
+  }
+
+  function betterConfidence(a, b) {
+    return (CONFIDENCE_RANK[a] || 0) >= (CONFIDENCE_RANK[b] || 0) ? a : b;
+  }
+
+  function parseCountInfo(text, source) {
+    const parsed = extractCountFromTextDetailed(text);
+    let confidence = parsed.confidence;
+
+    // Broad/aria paths are useful fallbacks, but less trustworthy than direct count nodes.
+    if (/^aria\.|^broad\./.test(source) && confidence === "high") {
+      confidence = "medium";
+    }
+    if (/^emoji\./.test(source) && confidence !== "low") {
+      confidence = "medium";
+    }
+
+    return {
+      value: parsed.value,
+      confidence,
+      raw: parsed.raw,
+      source,
+    };
+  }
+
+  function computeEngagementConfidence(debugEntries) {
+    if (!debugEntries || !debugEntries.length) return "low";
+    let best = "low";
+    for (const d of debugEntries) {
+      best = betterConfidence(best, d.confidence || "low");
+    }
+    return best;
+  }
+
+  function suspiciousJumpDetected(previousEngagement, currentEngagement) {
+    if (!previousEngagement) return false;
+    const keys = ["reactions", "comments", "reposts"];
+    for (const key of keys) {
+      const prev = Number(previousEngagement[key]) || 0;
+      const curr = Number(currentEngagement[key]) || 0;
+      if (prev === 0 && curr >= 500000) return true;
+      if (prev >= 10 && curr >= prev * 100) return true;
+    }
+    return false;
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -266,6 +403,7 @@
     let reactions = 0;
     let comments = 0;
     let reposts = 0;
+    const debug = [];
 
     // Pass 1: social-counts container
     const countsEl = post.querySelector(
@@ -277,25 +415,47 @@
         countsEl.querySelector('[data-control-name="reactions_count"]') ||
         countsEl.querySelector('button[aria-label*="reaction"] span') ||
         countsEl.querySelector('span[class*="reactions-count"]');
-      if (rEl) reactions = extractFirstNumber(rEl.textContent);
+      if (rEl) {
+        const parsed = parseCountInfo(rEl.textContent, "counts.reactions.primary");
+        if (parsed.value > 0) {
+          reactions = parsed.value;
+          debug.push(parsed);
+        }
+      }
 
       if (reactions === 0) {
         for (const span of countsEl.querySelectorAll("span")) {
           const t = (span.textContent || "").trim();
-          const n = extractFirstNumber(t);
-          if (n > 0 && !/comment|repost/i.test(t)) { reactions = n; break; }
+          const parsed = parseCountInfo(t, "counts.reactions.fallback");
+          if (parsed.value > 0 && !/comment|repost/i.test(t)) {
+            reactions = parsed.value;
+            debug.push(parsed);
+            break;
+          }
         }
       }
 
       for (const el of countsEl.querySelectorAll("button, a, span, li")) {
         const t = (el.textContent || "").trim();
         if (comments === 0) {
-          const cm = t.match(/([\d,.]+[KMB]?)\s*comments?/i);
-          if (cm) comments = parseCount(cm[1].replace(/,/g, ""));
+          const cm = t.match(/([\d.,\s\u00a0]+(?:\.\d+)?\s*[KMB]?)\s*comments?/i);
+          if (cm) {
+            const parsed = parseCountInfo(cm[1], "counts.comments.label");
+            if (parsed.value > 0) {
+              comments = parsed.value;
+              debug.push(parsed);
+            }
+          }
         }
         if (reposts === 0) {
-          const rm = t.match(/([\d,.]+[KMB]?)\s*reposts?/i);
-          if (rm) reposts = parseCount(rm[1].replace(/,/g, ""));
+          const rm = t.match(/([\d.,\s\u00a0]+(?:\.\d+)?\s*[KMB]?)\s*reposts?/i);
+          if (rm) {
+            const parsed = parseCountInfo(rm[1], "counts.reposts.label");
+            if (parsed.value > 0) {
+              reposts = parsed.value;
+              debug.push(parsed);
+            }
+          }
         }
       }
     }
@@ -304,16 +464,19 @@
     if (reactions === 0 && comments === 0 && reposts === 0) {
       for (const btn of post.querySelectorAll("button[aria-label]")) {
         const lbl = (btn.getAttribute("aria-label") || "").toLowerCase();
-        const num = (txt) => {
-          const m = txt.match(/([\d,.]+[KMB]?)/i);
-          return m ? parseCount(m[1].replace(/,/g, "")) : 0;
+        const num = (txt, source) => {
+          const m = txt.match(/([\d.,\s\u00a0]+(?:\.\d+)?\s*[KMB]?)/i);
+          if (!m) return 0;
+          const parsed = parseCountInfo(m[1], source);
+          if (parsed.value > 0) debug.push(parsed);
+          return parsed.value;
         };
         if ((lbl.includes("reaction") || lbl.includes("like")) && !lbl.includes("unlike"))
-          reactions = Math.max(reactions, num(lbl));
+          reactions = Math.max(reactions, num(lbl, "aria.reactions"));
         if (lbl.includes("comment"))
-          comments = Math.max(comments, num(lbl));
+          comments = Math.max(comments, num(lbl, "aria.comments"));
         if (lbl.includes("repost") || lbl.includes("share"))
-          reposts = Math.max(reposts, num(lbl));
+          reposts = Math.max(reposts, num(lbl, "aria.reposts"));
       }
     }
 
@@ -324,16 +487,34 @@
         const t = (node.textContent || "").trim();
         if (t.length > 100) continue;
         if (reactions === 0) {
-          const m = t.match(/([\d,.]+[KMB]?)\s*(?:reactions?|likes?)/i);
-          if (m) reactions = parseCount(m[1].replace(/,/g, ""));
+          const m = t.match(/([\d.,\s\u00a0]+(?:\.\d+)?\s*[KMB]?)\s*(?:reactions?|likes?)/i);
+          if (m) {
+            const parsed = parseCountInfo(m[1], "broad.reactions");
+            if (parsed.value > 0) {
+              reactions = parsed.value;
+              debug.push(parsed);
+            }
+          }
         }
         if (comments === 0) {
-          const m = t.match(/([\d,.]+[KMB]?)\s*comments?/i);
-          if (m) comments = parseCount(m[1].replace(/,/g, ""));
+          const m = t.match(/([\d.,\s\u00a0]+(?:\.\d+)?\s*[KMB]?)\s*comments?/i);
+          if (m) {
+            const parsed = parseCountInfo(m[1], "broad.comments");
+            if (parsed.value > 0) {
+              comments = parsed.value;
+              debug.push(parsed);
+            }
+          }
         }
         if (reposts === 0) {
-          const m = t.match(/([\d,.]+[KMB]?)\s*reposts?/i);
-          if (m) reposts = parseCount(m[1].replace(/,/g, ""));
+          const m = t.match(/([\d.,\s\u00a0]+(?:\.\d+)?\s*[KMB]?)\s*reposts?/i);
+          if (m) {
+            const parsed = parseCountInfo(m[1], "broad.reposts");
+            if (parsed.value > 0) {
+              reposts = parsed.value;
+              debug.push(parsed);
+            }
+          }
         }
       }
     }
@@ -343,12 +524,20 @@
       for (const img of post.querySelectorAll('img[class*="reactions-icon"], img[src*="reactions"], img[alt*="reaction"], img[src*="like"], img[src*="praise"], img[src*="empathy"]')) {
         const parent = img.parentElement;
         if (!parent) continue;
-        const n = extractFirstNumber(parent.textContent);
-        if (n > 0) { reactions = n; break; }
+        const parentParsed = parseCountInfo(parent.textContent, "emoji.reactions.parent");
+        if (parentParsed.value > 0) {
+          reactions = parentParsed.value;
+          debug.push(parentParsed);
+          break;
+        }
         const sib = parent.nextElementSibling || parent.parentElement;
         if (sib) {
-          const sn = extractFirstNumber(sib.textContent);
-          if (sn > 0) { reactions = sn; break; }
+          const siblingParsed = parseCountInfo(sib.textContent, "emoji.reactions.sibling");
+          if (siblingParsed.value > 0) {
+            reactions = siblingParsed.value;
+            debug.push(siblingParsed);
+            break;
+          }
         }
       }
     }
@@ -357,16 +546,25 @@
     if (comments === 0 && reposts === 0) {
       for (const el of post.querySelectorAll("span, button, a")) {
         const t = (el.textContent || "").trim();
-        const combined = t.match(/([\d,.]+[KMB]?)\s*comments?\s*[·•]\s*([\d,.]+[KMB]?)\s*reposts?/i);
+        const combined = t.match(/([\d.,\s\u00a0]+(?:\.\d+)?\s*[KMB]?)\s*comments?\s*[·•]\s*([\d.,\s\u00a0]+(?:\.\d+)?\s*[KMB]?)\s*reposts?/i);
         if (combined) {
-          comments = parseCount(combined[1].replace(/,/g, ""));
-          reposts = parseCount(combined[2].replace(/,/g, ""));
+          const commentsParsed = parseCountInfo(combined[1], "combined.comments");
+          const repostsParsed = parseCountInfo(combined[2], "combined.reposts");
+          if (commentsParsed.value > 0) {
+            comments = commentsParsed.value;
+            debug.push(commentsParsed);
+          }
+          if (repostsParsed.value > 0) {
+            reposts = repostsParsed.value;
+            debug.push(repostsParsed);
+          }
           break;
         }
       }
     }
 
-    return { reactions, comments, reposts };
+    const confidence = computeEngagementConfidence(debug);
+    return { reactions, comments, reposts, confidence, debug };
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -715,6 +913,7 @@
 
     const badge = document.createElement("div");
     badge.className = "leh-score-badge leh-color-" + getScoreColor(item, all);
+    if (item.engagementQuality === "low") badge.classList.add("leh-badge-suspect");
 
     const eng = item.engagement;
     const key = item.key || "";
@@ -731,6 +930,11 @@
 
     // Score as small secondary line
     const scoreLine = '<div class="leh-badge-score-line">Score: ' + item.score.toLocaleString() + '</div>';
+    const qualityLine =
+      '<div class="leh-badge-score-line">Parser: ' +
+      escHtml(item.engagementQuality || "unknown") +
+      (item.suspiciousJump ? " (check)" : "") +
+      "</div>";
 
     // Action buttons (bookmark + copy)
     const bookmarked = postStore.get(key)?.bookmarked ? " leh-bookmarked" : "";
@@ -739,7 +943,7 @@
       '<button class="leh-badge-btn" data-action="copy" data-key="' + key + '" title="Copy post">\u{1F4CB}</button>' +
       '</div>';
 
-    badge.innerHTML = metricsHtml + scoreLine + actionsHtml;
+    badge.innerHTML = metricsHtml + scoreLine + qualityLine + actionsHtml;
 
     // Wire badge button events
     badge.querySelectorAll(".leh-badge-btn").forEach((btn) => {
@@ -819,7 +1023,10 @@
         type: pi.type,
         score,
         engagement: eng,
+        engagementQuality: eng.confidence || "low",
+        engagementDebug: eng.debug || [],
         previousEngagement,
+        suspiciousJump: suspiciousJumpDetected(previousEngagement, eng),
         date: meta.date,
         username: meta.username,
         postUrl: meta.postUrl,
@@ -1008,7 +1215,8 @@
       window.scrollBy({ top: px, behavior: "instant" });
 
       // Auto-click "Show more" when scrolling down and near bottom
-      if (autoScrollDirection === "down" &&
+      if (autoLoadMoreEnabled &&
+          autoScrollDirection === "down" &&
           window.innerHeight + window.scrollY >= document.body.scrollHeight - 150 &&
           !showMoreHandled) {
         handleShowMore();
@@ -1018,7 +1226,7 @@
 
     autoScrollRafId = requestAnimationFrame(step);
     showMorePollId = setInterval(() => {
-      if (!autoScrollEnabled || autoScrollDirection !== "down") return;
+      if (!autoScrollEnabled || autoScrollDirection !== "down" || !autoLoadMoreEnabled) return;
       const btn = findShowMoreButton();
       if (btn && !showMoreHandled) handleShowMore();
     }, 3000);
@@ -1030,7 +1238,9 @@
   }
 
   function findShowMoreButton() {
+    // Non-invasive default: only user-visible controls, avoid hidden clicks.
     for (const el of document.querySelectorAll('button, a[role="button"]')) {
+      if (el.offsetParent === null || el.disabled || el.getAttribute("aria-hidden") === "true") continue;
       const t = (el.textContent || "").trim().toLowerCase();
       if (t.includes("show more") || t.includes("load more") ||
           t.includes("see more activity") || t.includes("show more results"))
@@ -1040,6 +1250,7 @@
   }
 
   function handleShowMore() {
+    if (!autoLoadMoreEnabled) return;
     const btn = findShowMoreButton();
     if (!btn || showMoreHandled) return;
     showMoreHandled = true;
@@ -1102,7 +1313,7 @@
           '<path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" fill="currentColor"/>' +
         '</svg>' +
         '<span class="leh-sidebar-title">Engagement Highlighter</span>' +
-        '<span class="leh-version-badge">v4.1</span>' +
+        '<span class="leh-version-badge">v4.2</span>' +
       '</div>' +
       '<button class="leh-header-close" title="Close sidebar">&times;</button>' +
     '</div>' +
@@ -1123,6 +1334,7 @@
         '<button id="leh-search-clear" class="leh-search-clear">&times;</button>' +
       '</div>' +
       '<div id="leh-search-count" class="leh-search-count"></div>' +
+      '<div id="leh-quality-count" class="leh-search-count"></div>' +
     '</div>' +
 
     // Media filter chips
@@ -1149,8 +1361,17 @@
       // V4.1: Shrink/Expand toggle for post feed
       '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 12px;">' +
         '<span class="leh-filter-label">Posts</span>' +
-        '<button id="leh-shrink-toggle" class="leh-card-btn" title="Toggle compact view">Shrink</button>' +
+        '<div style="display:flex;gap:6px;align-items:center;">' +
+          '<select id="leh-display-mode" class="leh-select" title="Number display mode" style="padding:3px 20px 3px 6px;font-size:10px;">' +
+            '<option value="compact">Compact</option>' +
+            '<option value="exact">Exact</option>' +
+          '</select>' +
+          '<label class="leh-mini-check" title="Show only suspect parsing results"><input type="checkbox" id="leh-suspect-only" /> Suspects</label>' +
+          '<button id="leh-suspect-next" class="leh-card-btn" title="Jump to next suspect count">Next Suspect</button>' +
+          '<button id="leh-shrink-toggle" class="leh-card-btn" title="Toggle compact view">Shrink</button>' +
+        '</div>' +
       '</div>' +
+      '<div id="leh-parser-diagnostics" class="leh-parser-diagnostics"></div>' +
       '<div id="leh-post-list" class="leh-post-list"></div>' +
 
       // Settings section
@@ -1209,6 +1430,8 @@
         '</div>' +
         '<div class="leh-section-body">' +
           '<div class="leh-control-row"><span class="leh-label-text">Enable</span><label class="leh-toggle"><input type="checkbox" id="leh-autoscroll" /><span class="leh-toggle-slider"></span></label></div>' +
+          '<div class="leh-help-text">Safety mode: only scrolls and clicks visible "show more" controls. Keep off when not needed.</div>' +
+          '<div class="leh-control-row"><span class="leh-label-text">Auto-load more</span><label class="leh-toggle"><input type="checkbox" id="leh-auto-load-more" /><span class="leh-toggle-slider"></span></label></div>' +
           '<div class="leh-control-row"><span class="leh-label-text">Direction</span>' +
             '<div class="leh-scroll-dir-btns">' +
               '<button class="leh-scroll-dir-btn leh-dir-active" data-dir="down">\u25BC Down</button>' +
@@ -1245,6 +1468,7 @@
             '<kbd>Ctrl+Shift+S</kbd> Start/stop scroll<br>' +
             '<kbd>Ctrl+Shift+E</kbd> Extract top posts<br>' +
             '<kbd>Ctrl+Shift+F</kbd> Focus search<br>' +
+            '<kbd>Ctrl+Shift+J</kbd> Next suspect count<br>' +
           '</div>' +
         '</div>' +
       '</div>' +
@@ -1345,12 +1569,44 @@
     $("leh-date-from").addEventListener("change", (e) => { customDateFrom = e.target.value; processAllPosts(true); saveSettings(); });
     $("leh-date-to").addEventListener("change", (e) => { customDateTo = e.target.value; processAllPosts(true); saveSettings(); });
 
+    // Display mode + suspect workflow
+    const displayModeEl = $("leh-display-mode");
+    if (displayModeEl) {
+      displayModeEl.value = countDisplayMode;
+      displayModeEl.onchange = (e) => {
+        countDisplayMode = e.target.value === "compact" ? "compact" : "exact";
+        updateSidebar();
+        saveSettings();
+      };
+    }
+    const suspectOnlyEl = $("leh-suspect-only");
+    if (suspectOnlyEl) {
+      suspectOnlyEl.checked = suspectOnlyMode;
+      suspectOnlyEl.onchange = (e) => {
+        suspectOnlyMode = !!e.target.checked;
+        suspectCursor = -1;
+        updateSidebar();
+        saveSettings();
+      };
+    }
+    const suspectNextEl = $("leh-suspect-next");
+    if (suspectNextEl) {
+      suspectNextEl.onclick = () => jumpToNextSuspect(true);
+    }
+
     // Auto-scroll
     $("leh-autoscroll").addEventListener("change", (e) => {
       autoScrollEnabled = e.target.checked;
       if (autoScrollEnabled) startAutoScroll(); else stopAutoScroll();
       saveSettings();
     });
+    const autoLoadMoreToggle = $("leh-auto-load-more");
+    if (autoLoadMoreToggle) {
+      autoLoadMoreToggle.onchange = (e) => {
+        autoLoadMoreEnabled = e.target.checked;
+        saveSettings();
+      };
+    }
 
     // Direction buttons
     sidebar.querySelectorAll(".leh-scroll-dir-btn").forEach((btn) => {
@@ -1368,6 +1624,8 @@
       $("leh-scroll-speed-val").textContent = autoScrollSpeed;
       saveSettings();
     });
+    const autoLoadMoreEl = $("leh-auto-load-more");
+    if (autoLoadMoreEl) autoLoadMoreEl.checked = autoLoadMoreEnabled;
 
     // Export buttons
     $("leh-extract").addEventListener("click", extractTopPosts);
@@ -1380,6 +1638,9 @@
       $("leh-shrink-toggle").textContent = compactPostCards ? "Expand" : "Shrink";
       updatePostList();
     });
+
+    // Diagnostics panel
+    updateDiagnosticsPanel();
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -1425,6 +1686,13 @@
       const ctx = { feed: "in feed", activity: "on activity", company: "on company", search: "in results" }[getPageType()] || "in feed";
       extractCount.textContent = total + " post" + (total !== 1 ? "s" : "") + " in store, " + visible + " visible " + ctx;
     }
+    const qualityCount = $("leh-quality-count");
+    if (qualityCount) {
+      const suspects = getSuspectEntries().length;
+      qualityCount.textContent = suspects > 0
+        ? suspects + " suspect parse" + (suspects === 1 ? "" : "s") + " detected"
+        : "No suspect parse issues detected";
+    }
 
     // Date filter count
     const filterCountEl = $("leh-filter-count");
@@ -1441,6 +1709,9 @@
       }
     }
 
+    // Parser diagnostics
+    updateDiagnosticsPanel();
+
     // Post list — from data store (not DOM)
     updatePostList();
   }
@@ -1456,6 +1727,7 @@
       if (!matchesMediaFilter(data.mediaType)) continue;
       if (!matchesSearch(data)) continue;
       if (!hasSignal(data)) continue; // V4.1: skip ghost entries
+      if (suspectOnlyMode && data.engagementQuality !== "low" && !data.suspiciousJump) continue;
       posts.push({ key, ...data });
     }
 
@@ -1470,6 +1742,14 @@
       } else {
         searchCountEl.textContent = "";
       }
+    }
+    const qualityCountEl = document.getElementById("leh-quality-count");
+    if (qualityCountEl) {
+      const suspects = getSuspectEntries().length;
+      qualityCountEl.textContent =
+        suspects > 0
+          ? suspects + " post" + (suspects !== 1 ? "s" : "") + " need parsing review"
+          : "Parser confidence looks healthy";
     }
 
     // Limit display to 50 cards for performance
@@ -1497,18 +1777,22 @@
 
       const bookmarkIcon = p.bookmarked ? "\u2605" : "\u2606";
       const bookmarkClass = p.bookmarked ? " leh-bookmarked" : "";
+      const isSuspect = p.engagementQuality === "low";
+      const suspectFlag = isSuspect ? '<span class="leh-suspect-pill">Suspect</span>' : "";
+      const suspectCardClass = isSuspect ? " leh-post-card-suspect" : "";
 
       // V4.1: Compact mode — single-line cards
       if (compactPostCards) {
-        html += '<div class="leh-post-card leh-post-card-compact" data-key="' + p.key + '">' +
+        html += '<div class="leh-post-card leh-post-card-compact' + suspectCardClass + '" data-key="' + p.key + '">' +
           '<span class="leh-post-card-author">' + highlightedAuthor + '</span>' +
           '<span class="leh-compact-metrics">' +
-            '\u{1F44D}' + formatCount(p.engagement.reactions) +
-            ' \u{1F4AC}' + formatCount(p.engagement.comments) +
-            ' \u{1F501}' + formatCount(p.engagement.reposts) +
+            '\u{1F44D}' + formatCount(p.engagement.reactions, countDisplayMode) +
+            ' \u{1F4AC}' + formatCount(p.engagement.comments, countDisplayMode) +
+            ' \u{1F501}' + formatCount(p.engagement.reposts, countDisplayMode) +
           '</span>' +
+          suspectFlag +
           '<span class="leh-post-card-media ' + mediaClass + '">' + mediaLabel + '</span>' +
-          '<span class="leh-post-card-score">' + formatCount(p.score) + '</span>' +
+          '<span class="leh-post-card-score">' + formatCount(p.score, countDisplayMode) + '</span>' +
           '<button class="leh-card-btn' + bookmarkClass + '" data-action="bookmark" data-key="' + p.key + '" title="Bookmark" style="margin-left:auto;">' + bookmarkIcon + '</button>' +
         '</div>';
         continue;
@@ -1529,16 +1813,17 @@
         if (p.engagement.reposts > p.previousEngagement.reposts) repostTrend = '<span class="leh-metric-trend-up">\u2191</span>';
       }
 
-      html += '<div class="leh-post-card" data-key="' + p.key + '">' +
+      html += '<div class="leh-post-card' + suspectCardClass + '" data-key="' + p.key + '">' +
         '<div class="leh-post-card-header">' +
           '<span class="leh-post-card-author">' + highlightedAuthor + '</span>' +
           '<span class="leh-post-card-date">' + dateStr + '</span>' +
         '</div>' +
         '<div class="leh-post-card-hook">' + highlightedHook + '</div>' +
         '<div class="leh-post-card-metrics">' +
-          '<span class="leh-metric">\u{1F44D} <span class="leh-metric-value">' + formatCount(p.engagement.reactions) + '</span>' + reactTrend + '</span>' +
-          '<span class="leh-metric">\u{1F4AC} <span class="leh-metric-value">' + formatCount(p.engagement.comments) + '</span>' + commentTrend + '</span>' +
-          '<span class="leh-metric">\u{1F501} <span class="leh-metric-value">' + formatCount(p.engagement.reposts) + '</span>' + repostTrend + '</span>' +
+          '<span class="leh-metric">\u{1F44D} <span class="leh-metric-value">' + formatCount(p.engagement.reactions, countDisplayMode) + '</span>' + reactTrend + '</span>' +
+          '<span class="leh-metric">\u{1F4AC} <span class="leh-metric-value">' + formatCount(p.engagement.comments, countDisplayMode) + '</span>' + commentTrend + '</span>' +
+          '<span class="leh-metric">\u{1F501} <span class="leh-metric-value">' + formatCount(p.engagement.reposts, countDisplayMode) + '</span>' + repostTrend + '</span>' +
+          suspectFlag +
         '</div>' +
         '<div class="leh-post-card-footer">' +
           '<span class="leh-post-card-score">Score: ' + p.score.toLocaleString() + '</span>' +
@@ -1598,6 +1883,90 @@
         }
       });
     });
+  }
+
+  function getSuspectEntries() {
+    const suspects = [];
+    for (const [key, data] of postStore) {
+      if (!data || !hasSignal(data)) continue;
+      const lowConfidence = data.engagementQuality === "low";
+      if (lowConfidence || data.suspiciousJump) suspects.push({ key, ...data });
+    }
+    suspects.sort((a, b) => b.score - a.score);
+    return suspects;
+  }
+
+  function buildParserDiagnosticsHTML() {
+    let total = 0;
+    let low = 0;
+    let medium = 0;
+    let high = 0;
+    let jumps = 0;
+    for (const [, v] of postStore) {
+      if (!v || !hasSignal(v)) continue;
+      total++;
+      if (v.engagementQuality === "high") high++;
+      else if (v.engagementQuality === "medium") medium++;
+      else low++;
+      if (v.suspiciousJump) jumps++;
+    }
+    const suspects = getSuspectEntries().length;
+    return (
+      '<div class="leh-parser-diagnostics-inner">' +
+      '<span class="leh-diag-chip">Parser high: ' + high + "</span>" +
+      '<span class="leh-diag-chip">medium: ' + medium + "</span>" +
+      '<span class="leh-diag-chip">low: ' + low + "</span>" +
+      '<span class="leh-diag-chip">suspects: ' + suspects + "</span>" +
+      '<span class="leh-diag-chip">jumps: ' + jumps + "</span>" +
+      (suspectOnlyMode ? '<span class="leh-diag-chip leh-diag-chip-active">suspects only</span>' : "") +
+      (countDisplayMode === "exact" ? '<span class="leh-diag-chip">view: exact</span>' : '<span class="leh-diag-chip">view: compact</span>') +
+      "</div>"
+    );
+  }
+
+  function updateDiagnosticsPanel() {
+    const panel = document.getElementById("leh-parser-diagnostics");
+    if (!panel) return;
+    panel.innerHTML = buildParserDiagnosticsHTML();
+    const suspectCount = getSuspectEntries().length;
+    const nextBtn = document.getElementById("leh-suspect-next");
+    if (nextBtn) nextBtn.disabled = suspectCount === 0;
+  }
+
+  function jumpToPostByKey(key) {
+    const pd = postStore.get(key);
+    if (!pd || !pd.element || !pd.element.isConnected) return false;
+    pd.element.scrollIntoView({ behavior: "smooth", block: "center" });
+    pd.element.style.transition = "box-shadow 0.3s";
+    pd.element.style.boxShadow = "0 0 20px rgba(239, 68, 68, 0.5)";
+    setTimeout(() => { pd.element.style.boxShadow = ""; }, 2200);
+    return true;
+  }
+
+  function jumpToNextSuspect(forceVisibleList) {
+    const suspects = getSuspectEntries();
+    if (!suspects.length) {
+      const btn = document.getElementById("leh-suspect-next");
+      if (btn) {
+        const old = btn.textContent;
+        btn.textContent = "No Suspects";
+        setTimeout(() => { btn.textContent = old; }, 1200);
+      }
+      return;
+    }
+    suspectCursor = (suspectCursor + 1) % suspects.length;
+    const target = suspects[suspectCursor];
+    if (forceVisibleList && !suspectOnlyMode) {
+      suspectOnlyMode = true;
+      const toggle = document.getElementById("leh-suspect-only");
+      if (toggle) toggle.checked = true;
+      updateSidebar();
+    }
+    if (!jumpToPostByKey(target.key)) {
+      // If DOM element is recycled, force refresh once and retry.
+      processAllPosts(true);
+      setTimeout(() => jumpToPostByKey(target.key), 220);
+    }
   }
 
   function escHtml(s) {
@@ -1938,10 +2307,22 @@
         if (data.bookmarked) bookmarkedKeys.push(key);
       }
       chrome.storage.local.set({
-        lehSettingsV40: {
-          enabled, showScores, mode, absoluteThreshold, weights,
-          autoScrollSpeed, autoScrollDirection, dateFilter, customDateFrom, customDateTo,
-          sidebarOpen, bookmarkedKeys,
+        lehSettingsV42: {
+          enabled,
+          showScores,
+          countDisplayMode,
+          suspectOnlyMode,
+          mode,
+          absoluteThreshold,
+          weights,
+          autoScrollSpeed,
+          autoScrollDirection,
+          autoLoadMoreEnabled,
+          dateFilter,
+          customDateFrom,
+          customDateTo,
+          sidebarOpen,
+          bookmarkedKeys,
         },
       });
     } catch {}
@@ -1949,15 +2330,18 @@
 
   function loadSettings() {
     try {
-      chrome.storage.local.get("lehSettingsV40", (res) => {
-        if (!res?.lehSettingsV40) {
-          // Try migrating from v3.3
-          chrome.storage.local.get("lehSettingsV33", (res2) => {
-            if (res2?.lehSettingsV33) applySettings(res2.lehSettingsV33);
-          });
+      chrome.storage.local.get(["lehSettingsV42", "lehSettingsV40", "lehSettingsV33"], (res) => {
+        if (res?.lehSettingsV42) {
+          applySettings(res.lehSettingsV42);
           return;
         }
-        applySettings(res.lehSettingsV40);
+        if (res?.lehSettingsV40) {
+          applySettings(res.lehSettingsV40);
+          return;
+        }
+        if (res?.lehSettingsV33) {
+          applySettings(res.lehSettingsV33);
+        }
       });
     } catch {}
   }
@@ -1965,11 +2349,14 @@
   function applySettings(s) {
     enabled = s.enabled ?? true;
     showScores = s.showScores ?? true;
+    countDisplayMode = s.countDisplayMode === "compact" ? "compact" : "exact";
+    suspectOnlyMode = !!s.suspectOnlyMode;
     mode = s.mode ?? "percentile";
     absoluteThreshold = s.absoluteThreshold ?? 100;
     weights = s.weights ?? { reactions: 5, comments: 10, reposts: 2 };
     autoScrollSpeed = s.autoScrollSpeed ?? 3;
     autoScrollDirection = s.autoScrollDirection ?? "down";
+    autoLoadMoreEnabled = !!s.autoLoadMoreEnabled;
     dateFilter = s.dateFilter ?? "all";
     customDateFrom = s.customDateFrom ?? "";
     customDateTo = s.customDateTo ?? "";
@@ -1999,6 +2386,9 @@
     const dfrom = $("leh-date-from"); if (dfrom) dfrom.value = customDateFrom;
     const dto = $("leh-date-to"); if (dto) dto.value = customDateTo;
     const dc = $("leh-date-custom"); if (dc) dc.style.display = dateFilter === "custom" ? "block" : "none";
+    const dm = $("leh-display-mode"); if (dm) dm.value = countDisplayMode;
+    const so = $("leh-suspect-only"); if (so) so.checked = suspectOnlyMode;
+    const al = $("leh-auto-load-more"); if (al) al.checked = autoLoadMoreEnabled;
 
     // Scroll direction buttons
     document.querySelectorAll(".leh-scroll-dir-btn").forEach((btn) =>
@@ -2045,6 +2435,10 @@
         if (!sidebarOpen) toggleSidebar();
         const searchEl = document.getElementById("leh-search");
         if (searchEl) searchEl.focus();
+      }
+      if (e.ctrlKey && e.shiftKey && e.key.toUpperCase() === "J") {
+        e.preventDefault();
+        jumpToNextSuspect(true);
       }
     });
   }

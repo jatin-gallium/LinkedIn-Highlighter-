@@ -365,6 +365,46 @@ body.leh-sidebar-open #leh-sidebar-tab {
   padding: 6px;
 }
 
+.leh-parser-diagnostics {
+  padding: 4px 10px 0;
+}
+
+.leh-parser-diagnostics-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.leh-diag-chip {
+  font-size: 10px;
+  color: var(--leh-text-muted);
+  border: 1px solid var(--leh-border-light);
+  border-radius: 10px;
+  padding: 2px 7px;
+  background: var(--leh-bg-alt);
+}
+
+.leh-diag-chip-active {
+  color: #fff;
+  background: var(--leh-primary);
+  border-color: var(--leh-primary);
+}
+
+.leh-mini-check {
+  font-size: 10px;
+  color: var(--leh-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.leh-mini-check input {
+  margin: 0;
+  width: 12px;
+  height: 12px;
+}
+
 .leh-post-card {
   padding: 10px 12px;
   margin-bottom: 4px;
@@ -378,6 +418,11 @@ body.leh-sidebar-open #leh-sidebar-tab {
 .leh-post-card:hover {
   border-color: var(--leh-primary);
   box-shadow: 0 2px 8px rgba(10, 102, 194, 0.1);
+}
+
+.leh-post-card-suspect {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.04);
 }
 
 /* V4.1: Compact post card — single line */
@@ -498,6 +543,16 @@ body.leh-sidebar-open #leh-sidebar-tab {
   font-size: 10px;
   font-weight: 700;
   color: var(--leh-primary);
+}
+
+.leh-suspect-pill {
+  font-size: 9px;
+  font-weight: 700;
+  color: #b91c1c;
+  border: 1px solid rgba(185, 28, 28, 0.35);
+  border-radius: 999px;
+  padding: 1px 6px;
+  line-height: 1.2;
 }
 
 .leh-post-card-media {
@@ -965,6 +1020,10 @@ body.leh-sidebar-open #leh-sidebar-tab {
   -webkit-backdrop-filter: blur(8px);
   pointer-events: auto;
   cursor: default;
+}
+
+.leh-badge-suspect {
+  outline: 1px solid rgba(239, 68, 68, 0.75);
 }
 
 .leh-badge-metrics {

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "LinkedIn Engagement Highlighter V4.1",
-  "version": "4.1.0",
-  "description": "Sidebar-based LinkedIn engagement analyzer with search, media filters, bidirectional scroll, persistent data store, and rich export. V4.1 fixes ghost post detection. Fully client-side.",
+  "name": "LinkedIn Engagement Highlighter V4.2",
+  "version": "4.2.0",
+  "description": "LinkedIn engagement analyzer with strict parsing, suspect detection, safer automation defaults, SPA reliability fixes, and lightweight diagnostics. Fully client-side.",
   "permissions": ["storage"],
   "host_permissions": ["https://www.linkedin.com/*"],
   "content_scripts": [
