@@ -1330,8 +1330,13 @@
     '<div class="leh-search-box">' +
       '<div class="leh-search-caption">Search and review</div>' +
       '<div class="leh-search-input-wrap">' +
-        '<span class="leh-search-icon">\u{1F50D}</span>' +
-        '<input type="text" id="leh-search" class="leh-search-input" placeholder="Search by keyword, author, or hook..." />' +
+        '<span class="leh-search-icon" aria-hidden="true">' +
+          '<svg viewBox="0 0 24 24" width="14" height="14" fill="none">' +
+            '<circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"></circle>' +
+            '<path d="M20 20L16.7 16.7" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>' +
+          '</svg>' +
+        '</span>' +
+        '<input type="text" id="leh-search" class="leh-search-input" placeholder="Search posts, authors, hooks..." />' +
         '<button id="leh-search-clear" class="leh-search-clear" title="Clear search" aria-label="Clear search">&times;</button>' +
       '</div>' +
       '<div class="leh-search-meta">' +
