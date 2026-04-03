@@ -111,6 +111,10 @@ You can unzip it and load unpacked in Chrome.
 - Session-based data store (bookmarks/settings persist in extension storage)
 - No server-side sync
 
+## Project history
+
+- **PR #2 rollback (merged then reverted on `main`):** Commit [abd7219](https://github.com/jatin-gallium/LinkedIn-Highlighter-/commit/abd7219) restored `4.2/content.js`, `4.2/styles.css`, and `4.2/manifest.json` to the pre–PR #2 state. The merge commit for PR #2 remains in history; current `main` does not include the Library tab, glass UI pass, or `lehLibraryV42` storage from that branch.
+
 ## License
 
 Internal/project use unless otherwise specified by repository owner.
