@@ -8,6 +8,8 @@ const els = {
   pause: document.getElementById("pauseBtn"),
   resume: document.getElementById("resumeBtn"),
   stop: document.getElementById("stopBtn"),
+  clearStore: document.getElementById("clearStoreBtn"),
+  refreshStatus: document.getElementById("refreshStatusBtn"),
   exportMd: document.getElementById("exportMdBtn"),
   exportJson: document.getElementById("exportJsonBtn"),
   countValue: document.getElementById("countValue"),
@@ -122,6 +124,24 @@ async function refreshState() {
   els.profileDeepScan.checked = Boolean(s.profileDeepScan);
 }
 
+async function clearStore() {
+  const res = await command("clear-store");
+  if (!res?.ok) {
+    setStatusPill("Clear failed", "tfc-pill-error");
+    return;
+  }
+  await refreshState();
+}
+
+async function refreshStatus() {
+  const res = await command("refresh-status");
+  if (!res?.ok) {
+    setStatusPill("Refresh failed", "tfc-pill-error");
+    return;
+  }
+  await refreshState();
+}
+
 function bindEvents() {
   els.start.addEventListener("click", async () => {
     await applyControls();
@@ -140,6 +160,8 @@ function bindEvents() {
     await command("stop");
     refreshState();
   });
+  els.clearStore.addEventListener("click", clearStore);
+  els.refreshStatus.addEventListener("click", refreshStatus);
   els.exportMd.addEventListener("click", exportMarkdown);
   els.exportJson.addEventListener("click", exportJson);
   els.classifier.addEventListener("change", applyControls);

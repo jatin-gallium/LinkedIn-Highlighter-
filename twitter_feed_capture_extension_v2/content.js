@@ -1303,6 +1303,42 @@
     sendResponse({ ok: false, error: "Unknown message type." });
   }
 
+  function clearStoreAndResetState() {
+    postStore.clear();
+    queue.length = 0;
+    idToNode.clear();
+    deepScanCheckpoint = null;
+    state.capturedCount = 0;
+    state.duplicateCount = 0;
+    state.scanLoops = 0;
+    state.avgLoopMs = 0;
+    state.queueDepth = 0;
+    state.lastCaptureAt = 0;
+    runtimeMetrics.loopDurations = [];
+    runtimeMetrics.lastNewCount = 0;
+    runtimeMetrics.lastQueueDrainMs = 0;
+    runtimeMetrics.cooldownUntil = 0;
+    state.statusMessage = "Store cleared";
+    document.querySelectorAll(".tfcv2-badge").forEach((el) => {
+      el.remove();
+    });
+    document.querySelectorAll(".tfcv2-processed, .tfcv2-hit, .tfcv2-maybe, .tfcv2-low").forEach((el) => {
+      el.classList.remove("tfcv2-processed", "tfcv2-hit", "tfcv2-maybe", "tfcv2-low");
+    });
+  }
+
+  function refreshStatus() {
+    state.currentProfile = detectProfileHandle() || state.currentProfile;
+    state.queueDepth = queue.length;
+    if (state.running && !state.paused) {
+      state.statusMessage = `Running (${safeGetModePreset(state.mode).label})`;
+    } else if (state.running && state.paused) {
+      state.statusMessage = "Paused";
+    } else {
+      state.statusMessage = "Idle";
+    }
+  }
+
   function applyCommand(command, sendResponse) {
     const action = command.action;
     if (!action) {
@@ -1384,6 +1420,13 @@
         });
         return;
       }
+      case "clear-store":
+        clearStoreAndResetState();
+        seedQueue();
+        break;
+      case "refresh-status":
+        refreshStatus();
+        break;
       default:
         sendResponse({ ok: false, error: `Unknown action: ${action}` });
         return;
