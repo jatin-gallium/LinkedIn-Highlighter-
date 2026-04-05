@@ -12,7 +12,7 @@ Fast, client-side Twitter/X capture extension built for:
 
 Load this folder as an unpacked extension:
 
-- `twitter_feed_capture_extension/`
+- `twitter_feed_capture_extension_v2/`
 
 ## Supported tags
 
@@ -57,7 +57,7 @@ Each profile uses:
 1. Open `chrome://extensions`
 2. Enable **Developer mode**
 3. Click **Load unpacked**
-4. Select `twitter_feed_capture_extension`
+4. Select `twitter_feed_capture_extension_v2`
 5. Open X/Twitter and start scanner from popup or in-page panel
 
 ## Notes
